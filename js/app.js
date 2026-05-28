@@ -14,7 +14,7 @@ const App = (() => {
     bindAgentTabs();
     bindAgentSend();
     bindPanelCollapse();
-    bindVNControls();
+    bindLayoutPanel();
     bindPublish();
     bindNewProject();
     bindThemeToggle();
@@ -89,92 +89,92 @@ const App = (() => {
     document.getElementById('lineHeightSelect')?.addEventListener('change', e => {
       editor.style.lineHeight = e.target.value;
     });
-    // ── 格式按钮（Word 风格：mousedown 拦截 + 直接操作 persist-selection） ──
-    // 核心问题：persist-selection 包裹层会导致 execCommand 执行范围不准确 → 格式回弹
-    // 解决方案：直接在 persist-selection span 上选择内容 → 执行命令 → 再解包
+    // ── 格式按钮（v2：selectionchange 持续追踪选区 + direct execCommand，稳定可靠） ──
+    // 核心思路：不再依赖脆弱的 persist-selection span 包裹机制。
+    // 用 selectionchange 事件持续把"当前选区"存下，按钮点击时直接恢复并用 execCommand 执行。
 
-    function applyInlineFormat(cmd) {
-      const hl = document.querySelector('.persist-selection');
-      const editor = document.getElementById('textEditor');
+    let _lastEditorRange = null;       // 编辑器内最后一次选区 Range 快照
+    let _formatBtnClicked = false;     // 防抖：标记是否有格式按钮被点击（避免 mouseup 清选区）
 
-      if (hl && editor.contains(hl)) {
-        // 有 persist-selection 包裹 → 在其内容上直接执行格式命令
-        editor.focus();
-        const range = document.createRange();
-        range.selectNodeContents(hl);
-        const sel = window.getSelection();
+    // 持续追踪编辑器内的选区变化
+    document.addEventListener('selectionchange', () => {
+      const sel = window.getSelection();
+      if (!sel || !sel.rangeCount || sel.isCollapsed) {
+        // 如果格式按钮刚被点击（mousedown发生在selectionchange之前），不要清空快照
+        if (_formatBtnClicked) return;
+        _lastEditorRange = null;
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      if (editor.contains(range.commonAncestorContainer)) {
+        _lastEditorRange = range.cloneRange();
+      }
+    });
+
+    // 通用格式执行器
+    function _execFormat(cmd, arg) {
+      const sel = window.getSelection();
+      // 确保编辑器聚焦
+      editor.focus();
+
+      // 优先使用当前选区，否则回退到追踪的快照
+      let range = null;
+      if (sel && sel.rangeCount && !sel.isCollapsed) {
+        const r = sel.getRangeAt(0);
+        if (editor.contains(r.commonAncestorContainer)) {
+          range = r;
+        }
+      }
+      if (!range && _lastEditorRange) {
+        range = _lastEditorRange;
+      }
+
+      if (range) {
         sel.removeAllRanges();
         sel.addRange(range);
-        document.execCommand(cmd, false, null);
-        // 执行完格式后解包 persist-selection，保留内部已添加的格式标签
-        unwrapSpan(hl);
       } else {
-        // 没有 persist 包裹 → 检查当前选区
-        const sel = window.getSelection();
-        if (!sel.rangeCount) return;
-        const range = sel.getRangeAt(0);
-        if (!editor.contains(range.commonAncestorContainer)) return;
-        editor.focus();
-        document.execCommand(cmd, false, null);
+        // 无选区：对光标所在行或光标位置执行
+        if (editor.contains(sel.anchorNode)) {
+          // 对当前光标所在文本块执行
+          try {
+            document.execCommand(cmd, false, arg);
+          } catch (_) {}
+          return;
+        }
+        return; // 真的没有任何有效选区
+      }
+
+      try {
+        document.execCommand(cmd, false, arg);
+      } catch (_) {}
+
+      // 格式执行完更新快照
+      if (sel.rangeCount) {
+        _lastEditorRange = sel.getRangeAt(0).cloneRange();
       }
     }
 
-    function applyBlockFormat(tag) {
-      const hl = document.querySelector('.persist-selection');
-      const editor = document.getElementById('textEditor');
-
-      if (hl && editor.contains(hl)) {
-        editor.focus();
-        const range = document.createRange();
-        range.selectNodeContents(hl);
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
-        document.execCommand('formatBlock', false, tag);
-        unwrapSpan(hl);
-      } else {
-        const sel = window.getSelection();
-        if (!sel.rangeCount) return;
-        const range = sel.getRangeAt(0);
-        if (!editor.contains(range.commonAncestorContainer)) return;
-        editor.focus();
-        document.execCommand('formatBlock', false, tag);
-      }
-    }
-
-    function unwrapSpan(span) {
-      const parent = span.parentNode;
-      if (!parent) return;
-      // 将 span 内所有子节点移到 span 前面，再删除 span
-      while (span.firstChild) {
-        parent.insertBefore(span.firstChild, span);
-      }
-      parent.removeChild(span);
-    }
-
-    // 绑定按钮（mousedown 执行 + mouseup/click 全链路拦截）
+    // 绑定按钮（mousedown 触发，阻止默认以保持选区）
     function bindFormatBtn(id, handler) {
       const btn = document.getElementById(id);
       if (!btn) return;
       btn.addEventListener('mousedown', e => {
         e.preventDefault();
         e.stopPropagation();
+        _formatBtnClicked = true;
         handler();
+        // 延迟清除标记，让 selectionchange 有时间拿到新状态
+        setTimeout(() => { _formatBtnClicked = false; }, 150);
       });
-      btn.addEventListener('mouseup', e => {
-        e.preventDefault();
-        e.stopPropagation();
-      });
-      btn.addEventListener('click', e => {
-        e.preventDefault();
-        e.stopPropagation();
-      });
+      // mouseup 和 click 全部拦截，防止编辑器失焦
+      btn.addEventListener('mouseup', e => { e.preventDefault(); e.stopPropagation(); });
+      btn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); });
     }
 
-    bindFormatBtn('fmtBold',   () => applyInlineFormat('bold'));
-    bindFormatBtn('fmtItalic', () => applyInlineFormat('italic'));
-    bindFormatBtn('fmtH2',     () => applyBlockFormat('h2'));
-    bindFormatBtn('fmtH3',     () => applyBlockFormat('h3'));
+    bindFormatBtn('fmtBold',   () => _execFormat('bold'));
+    bindFormatBtn('fmtItalic', () => _execFormat('italic'));
+    bindFormatBtn('fmtH2',     () => _execFormat('formatBlock', 'h2'));
+    bindFormatBtn('fmtH3',     () => _execFormat('formatBlock', 'h3'));
 
     document.getElementById('autoFormatBtn')?.addEventListener('click', () => {
       const raw = editor.innerText;
@@ -665,85 +665,118 @@ const App = (() => {
   }
 
   // 文本选中操作栏
-  let savedSelectionRange = null;
-  let savedSelectionHighlight = null;
+  // ── 浮动选中气泡（替换旧的 sticky bar + persist-selection 机制） ──
+  let _selectedText = '';              // 当前选中的文本
+  let _selectedRange = null;           // 选中区的 Range 快照
 
-  function saveSelection() {
-    const sel = window.getSelection();
-    if (!sel.rangeCount) return;
-    const range = sel.getRangeAt(0);
-    const editor = document.getElementById('textEditor');
-    if (!editor || !editor.contains(range.commonAncestorContainer)) return;
-    savedSelectionRange = range.cloneRange();
-
-    // 创建持久高亮标记（用户点击其他地方时选区的视觉反馈不会消失）
-    if (savedSelectionHighlight) {
-      savedSelectionHighlight.remove();
-      savedSelectionHighlight = null;
-    }
-    if (!range.collapsed) {
-      try {
-        savedSelectionHighlight = document.createElement('span');
-        savedSelectionHighlight.className = 'persist-selection';
-        range.surroundContents(savedSelectionHighlight);
-      } catch (_) {
-        savedSelectionHighlight = null;
-      }
-    }
+  function hideSelectionPopup() {
+    const popup = document.getElementById('selectionPopup');
+    if (popup) { popup.classList.remove('show'); popup.style.left = '-9999px'; }
+    _selectedText = '';
+    _selectedRange = null;
   }
 
-  function restoreSelection() {
-    if (!savedSelectionRange) return;
-    const sel = window.getSelection();
-    try {
-      sel.removeAllRanges();
-      sel.addRange(savedSelectionRange);
-    } catch (_) {}
-  }
+  let _popupHideTimer = null;
+  function showSelectionPopup(text, range) {
+    const popup = document.getElementById('selectionPopup');
+    const spCount = document.getElementById('spCount');
+    if (!popup) return;
 
-  function clearSavedSelection() {
-    if (savedSelectionHighlight) {
-      const parent = savedSelectionHighlight.parentNode;
-      if (parent) {
-        while (savedSelectionHighlight.firstChild) {
-          parent.insertBefore(savedSelectionHighlight.firstChild, savedSelectionHighlight);
-        }
-        parent.removeChild(savedSelectionHighlight);
-      }
-      savedSelectionHighlight = null;
+    _selectedText = text;
+    _selectedRange = range ? range.cloneRange() : null;
+    if (spCount) spCount.textContent = text.length;
+
+    // 定位：在选区末尾上方
+    const rect = range.getBoundingClientRect();
+    let top = rect.top - 48;           // 默认在选区上方
+    let left = rect.left + rect.width / 2;
+
+    // 如果上方空间不够，放到选区下方
+    if (top < 10) {
+      top = rect.bottom + 10;
+      popup.classList.add('sp-below');
+    } else {
+      popup.classList.remove('sp-below');
     }
-    savedSelectionRange = null;
+
+    // 水平居中，并限制在视口内
+    popup.style.left = left + 'px';
+    popup.style.top = top + 'px';
+    popup.classList.add('show');
+
+    // 延迟检测是否需要水平修正（DOM 渲染后才能获取 popup 宽度）
+    requestAnimationFrame(() => {
+      const pw = popup.offsetWidth;
+      const vw = window.innerWidth;
+      let l = left - pw / 2;
+      if (l < 8) l = 8;
+      if (l + pw > vw - 8) l = vw - pw - 8;
+      popup.style.transform = 'translateX(0)';
+      popup.style.left = l + 'px';
+    });
+
+    // 绑定气泡按钮（只绑定一次）
+    if (!popup._bound) {
+      popup._bound = true;
+      popup.querySelectorAll('.sp-btn').forEach(btn => {
+        btn.addEventListener('mousedown', e => {
+          e.preventDefault(); e.stopPropagation();
+          const agent = btn.dataset.agent;
+          const editor = document.getElementById('textEditor');
+          // 恢复选区（让用户在智能体聊天时能看到上下文）
+          if (_selectedRange && editor) {
+            const sel = window.getSelection();
+            try {
+              sel.removeAllRanges();
+              sel.addRange(_selectedRange);
+            } catch (_) {}
+          }
+          Agents.setContext(agent, _selectedText);
+          switchAgentTab(agent);
+          showToast(`已引用到 ${agent === 'ziwen' ? '字吻' : '花花'}`, 'success');
+          setTimeout(hideSelectionPopup, 400);
+        });
+      });
+      // 点击气泡外部关闭
+      document.addEventListener('mousedown', e => {
+        if (!popup.contains(e.target)) hideSelectionPopup();
+      });
+    }
   }
 
   function handleTextSelection(e) {
-    const sel = window.getSelection();
-    const actions = document.getElementById('selectionActions');
-    const selCount = document.getElementById('selCount');
-    if (!actions) return;
-
-    const text = sel?.toString().trim() || '';
-    if (text.length > 5) {
-      // 保存选区，防止点击按钮时丢失视觉效果
-      saveSelection();
-      actions.style.display = 'flex';
-      if (selCount) selCount.textContent = text.length;
-
-      // 绑定快捷按钮
-      document.querySelectorAll('.agent-quick-btn').forEach(btn => {
-        btn.onclick = () => {
-          const agent = btn.dataset.agent;
-          Agents.setContext(agent, text);
-          restoreSelection();
-          switchAgentTab(agent);
-          showToast(`已引用到 ${agent === 'ziwen' ? '字吻' : '花花'}`, 'success');
-          // 延迟清除高亮，保留视觉反馈
-          setTimeout(clearSavedSelection, 600);
-        };
-      });
-    } else {
-      clearSavedSelection();
-      actions.style.display = 'none';
+    // 键盘事件（keyup）延迟一下等选区稳定
+    if (e && e.type === 'keyup') {
+      clearTimeout(_selectionDebounce);
+      _selectionDebounce = setTimeout(() => checkSelection(), 100);
+      return;
     }
+    // mouseup 立即检查
+    if (e && e.type === 'mouseup') {
+      // 给浏览器一点时间完成点击后的选区更新
+      setTimeout(() => checkSelection(), 10);
+      return;
+    }
+    checkSelection();
+  }
+  let _selectionDebounce = null;
+
+  function checkSelection() {
+    const sel = window.getSelection();
+    const popup = document.getElementById('selectionPopup');
+    const editor = document.getElementById('textEditor');
+    if (!popup || !editor) return;
+
+    const text = (sel && sel.toString() || '').trim();
+    const inEditor = sel && sel.rangeCount && editor.contains(sel.getRangeAt(0).commonAncestorContainer);
+
+    if (text.length > 5 && inEditor) {
+      // 显示浮动气泡
+      showSelectionPopup(text, sel.getRangeAt(0));
+    } else if (text.length <= 5) {
+      hideSelectionPopup();
+    }
+    // 如果选区在编辑器外（例如点击了格式按钮），不关闭气泡
   }
 
   // ── 文件导入 ──
@@ -940,16 +973,15 @@ const App = (() => {
     document.getElementById('saveWorkBtn').onclick = () => LibraryManager.saveWorkFromModal();
   }
 
-  // ── Panel 折叠 + 展开 ──
+  // ── Panel 折叠 ──
   function bindPanelCollapse() {
     const layout = document.querySelector('.studio-layout');
     const textPanel = document.getElementById('textPanel');
-    const previewPanel = document.getElementById('previewPanel');
+    const layoutPanel = document.getElementById('layoutPanel');
     const rootStyle = getComputedStyle(document.documentElement);
     const leftW = rootStyle.getPropertyValue('--panel-left-w').trim();
     const rightW = rootStyle.getPropertyValue('--panel-right-w').trim();
 
-    // 重置 layout grid
     function resetGrid() {
       layout.style.gridTemplateColumns = '';
     }
@@ -959,50 +991,26 @@ const App = (() => {
       const btn = document.getElementById('expandTextPanel');
       const isExpanded = textPanel.classList.toggle('expanded');
       if (isExpanded) {
-        // 左侧展开一倍，右侧自动收起
         textPanel.classList.remove('collapsed');
         document.getElementById('collapseTextPanel').textContent = '◁';
-        previewPanel.classList.add('collapsed');
+        layoutPanel.classList.add('collapsed');
         document.getElementById('collapseRightPanel').textContent = '◁';
         layout.style.gridTemplateColumns = '680px 1fr 42px';
         btn.title = '恢复原始宽度';
       } else {
-        // 恢复：左右都回到默认
-        previewPanel.classList.remove('collapsed');
+        layoutPanel.classList.remove('collapsed');
         document.getElementById('collapseRightPanel').textContent = '▷';
         resetGrid();
         btn.title = '向右展开一倍';
       }
     });
 
-    // 右侧展开/收起
-    document.getElementById('expandPreviewPanel')?.addEventListener('click', () => {
-      const btn = document.getElementById('expandPreviewPanel');
-      const isExpanded = previewPanel.classList.toggle('expanded');
-      if (isExpanded) {
-        // 右侧展开一倍，左侧自动收起
-        previewPanel.classList.remove('collapsed');
-        document.getElementById('collapseRightPanel').textContent = '▷';
-        textPanel.classList.add('collapsed');
-        document.getElementById('collapseTextPanel').textContent = '▷';
-        layout.style.gridTemplateColumns = '42px 1fr 640px';
-        btn.title = '恢复原始宽度';
-      } else {
-        // 恢复
-        textPanel.classList.remove('collapsed');
-        document.getElementById('collapseTextPanel').textContent = '◁';
-        resetGrid();
-        btn.title = '向左展开一倍';
-      }
-    });
-
-    // 左侧原有收起按钮：需处理展开态冲突
+    // 左侧原有收起按钮
     document.getElementById('collapseTextPanel')?.addEventListener('click', () => {
-      // 如果左侧处于展开态，先取消展开
       if (textPanel.classList.contains('expanded')) {
         textPanel.classList.remove('expanded');
         document.getElementById('expandTextPanel').title = '向右展开一倍';
-        previewPanel.classList.remove('collapsed');
+        layoutPanel.classList.remove('collapsed');
         document.getElementById('collapseRightPanel').textContent = '▷';
         resetGrid();
         return;
@@ -1010,151 +1018,562 @@ const App = (() => {
       const btn = document.getElementById('collapseTextPanel');
       const isCollapsed = textPanel.classList.toggle('collapsed');
       btn.textContent = isCollapsed ? '▷' : '◁';
-      if (isCollapsed) {
-        layout.style.gridTemplateColumns = `42px 1fr ${rightW}`;
-      } else {
-        resetGrid();
-      }
+      if (isCollapsed) layout.style.gridTemplateColumns = `42px 1fr ${rightW}`;
+      else resetGrid();
     });
 
-    // 右侧原有收起按钮：需处理展开态冲突
+    // 右侧收起按钮
     document.getElementById('collapseRightPanel')?.addEventListener('click', () => {
-      // 如果右侧处于展开态，先取消展开
-      if (previewPanel.classList.contains('expanded')) {
-        previewPanel.classList.remove('expanded');
-        document.getElementById('expandPreviewPanel').title = '向左展开一倍';
-        textPanel.classList.remove('collapsed');
-        document.getElementById('collapseTextPanel').textContent = '◁';
-        resetGrid();
+      const btn = document.getElementById('collapseRightPanel');
+      const isCollapsed = layoutPanel.classList.toggle('collapsed');
+      btn.textContent = isCollapsed ? '◁' : '▷';
+      if (isCollapsed) layout.style.gridTemplateColumns = `${leftW} 1fr 42px`;
+      else resetGrid();
+    });
+  }
+
+  // ── 排版面板 ──
+  function bindLayoutPanel() {
+    const editor = document.getElementById('textEditor');
+    const layoutPreview = document.getElementById('lpContent');
+    const layoutEmpty = document.getElementById('lpEmpty');
+    if (!editor || !layoutPreview) return;
+
+    // 当前选中的模板
+    let currentTemplate = 'sakura';
+    const templateBgs = {
+      sakura: 'linear-gradient(180deg, #fff0f5 0%, #ffe4ec 100%)',
+      night: 'linear-gradient(180deg, #1a1a2e 0%, #16213e 100%)',
+      parchment: 'linear-gradient(180deg, #f5e6c8 0%, #e8d5a8 100%)',
+      ink: 'linear-gradient(180deg, #f5f0e8 0%, #e8e0d0 100%)',
+      starry: 'linear-gradient(180deg, #0d1b2a 0%, #1b2838 100%)'
+    };
+
+    // 模板选择
+    document.querySelectorAll('.template-card[data-tpl]').forEach(card => {
+      card.addEventListener('click', () => {
+        if (card.dataset.tpl === 'custom') {
+          openCanvasModal();
+          return;
+        }
+        document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active'));
+        card.classList.add('active');
+        currentTemplate = card.dataset.tpl;
+        _savedCanvasBg = null;
+        _savedCanvasBgImage = null;
+        applyTemplateBg(currentTemplate);
+        layoutPreview.style.backgroundImage = '';
+        layoutPreview.style.backgroundColor = '';
+      });
+    });
+
+    // ══════ 画布编辑器弹窗 ══════
+    let canvasState = {
+      mode: 'color',       // 'color' | 'image'
+      bgColor: '#fff0f5',
+      gradientDir: '180deg',
+      bgImage: null,
+      ratio: '16:9',
+      texture: null,
+      texOpacity: 40
+    };
+    // 联动：保存/恢复排版预览背景
+    let _savedCanvasBg = null;
+    let _savedCanvasBgImage = null;
+    let _prevLayoutBg = null;
+    let _prevLayoutBgImage = null;
+
+    const RATIO_MAP = {
+      '16:9': 16/9,
+      '9:16': 9/16,
+      '4:3': 4/3,
+      '1:1': 1,
+      '3:4': 3/4
+    };
+
+    function openCanvasModal() {
+      const modal = document.getElementById('canvasModal');
+      if (!modal) return;
+      // 保存当前排版预览背景（取消时恢复）
+      _prevLayoutBg = layoutPreview.style.background;
+      _prevLayoutBgImage = layoutPreview.style.backgroundImage;
+      modal.style.display = 'flex';
+      // Reset tab
+      modal.querySelectorAll('.ce-tab').forEach(t => { t.classList.remove('active'); });
+      modal.querySelector('.ce-tab[data-ce-tab="canvas"]')?.classList.add('active');
+      document.getElementById('cePanelCanvas').style.display = 'block';
+      document.getElementById('cePanelTexture').style.display = 'none';
+      document.getElementById('cePanelMaterial').style.display = 'none';
+      updateBigPreview();
+    }
+
+    function closeCanvasModal(restore = true) {
+      document.getElementById('canvasModal').style.display = 'none';
+      if (restore && _prevLayoutBg !== null) {
+        layoutPreview.style.background = _prevLayoutBg;
+        layoutPreview.style.backgroundImage = _prevLayoutBgImage || '';
+      }
+    }
+
+    document.getElementById('canvasModalClose')?.addEventListener('click', () => closeCanvasModal(true));
+    document.getElementById('canvasModalCancel')?.addEventListener('click', () => closeCanvasModal(true));
+    document.getElementById('canvasModal')?.addEventListener('click', e => {
+      if (e.target === document.getElementById('canvasModal')) closeCanvasModal(true);
+    });
+
+    // Tab 切换
+    document.querySelectorAll('#canvasModal .ce-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('#canvasModal .ce-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        const tabName = tab.dataset.ceTab;
+        document.getElementById('cePanelCanvas').style.display = tabName === 'canvas' ? 'block' : 'none';
+        document.getElementById('cePanelTexture').style.display = tabName === 'texture' ? 'block' : 'none';
+        document.getElementById('cePanelMaterial').style.display = tabName === 'material' ? 'block' : 'none';
+      });
+    });
+
+    // 纯色背景 — 选择色块 → 切换为纯色模式
+    document.querySelectorAll('#canvasModal .ce-color-dot').forEach(dot => {
+      dot.addEventListener('click', () => {
+        document.querySelectorAll('#canvasModal .ce-color-dot').forEach(d => d.classList.remove('active'));
+        dot.classList.add('active');
+        canvasState.mode = 'color';
+        canvasState.bgColor = dot.dataset.color;
+        canvasState.bgImage = null;
+        updateModeHint();
+        updateBigPreview();
+      });
+    });
+
+    // 自定义取色器 → 纯色模式
+    document.getElementById('ceCustomColor')?.addEventListener('input', e => {
+      canvasState.mode = 'color';
+      canvasState.bgColor = e.target.value;
+      canvasState.bgImage = null;
+      document.querySelectorAll('#canvasModal .ce-color-dot').forEach(d => d.classList.remove('active'));
+      updateModeHint();
+      updateBigPreview();
+    });
+
+    // 渐变方向
+    document.querySelectorAll('#canvasModal .ce-dir-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#canvasModal .ce-dir-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        canvasState.gradientDir = btn.dataset.dir;
+        updateBigPreview();
+      });
+    });
+
+    // 图片上传 → 切换为图片模式
+    document.getElementById('ceBgImage')?.addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        canvasState.mode = 'image';
+        canvasState.bgImage = ev.target.result;
+        canvasState.bgColor = null;
+        document.querySelectorAll('#canvasModal .ce-color-dot').forEach(d => d.classList.remove('active'));
+        updateModeHint();
+        updateBigPreview();
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // 图片链接 → 图片模式
+    document.getElementById('ceApplyUrl')?.addEventListener('click', () => {
+      const url = document.getElementById('ceBgUrl')?.value.trim();
+      if (!url) return;
+      canvasState.mode = 'image';
+      canvasState.bgImage = url;
+      canvasState.bgColor = null;
+      document.querySelectorAll('#canvasModal .ce-color-dot').forEach(d => d.classList.remove('active'));
+      updateModeHint();
+      updateBigPreview();
+    });
+
+    function updateModeHint() {
+      const hint = document.getElementById('ceModeHint');
+      if (hint) hint.textContent = canvasState.mode === 'color' ? '当前：纯色模式' : '当前：图片模式';
+    }
+
+    // 比例选择
+    document.querySelectorAll('#canvasModal .ce-ratio-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#canvasModal .ce-ratio-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        canvasState.ratio = btn.dataset.ratio;
+        updateBigPreview();
+      });
+    });
+
+    // 纹理选择
+    document.querySelectorAll('#canvasModal .ce-tex-card').forEach(card => {
+      card.addEventListener('click', () => {
+        if (canvasState.texture === card.dataset.tex) {
+          canvasState.texture = null;
+          card.classList.remove('active');
+        } else {
+          document.querySelectorAll('#canvasModal .ce-tex-card').forEach(t => t.classList.remove('active'));
+          card.classList.add('active');
+          canvasState.texture = card.dataset.tex;
+        }
+        updateBigPreview();
+      });
+    });
+
+    // 纹理强度
+    document.getElementById('ceTexOpacity')?.addEventListener('input', e => {
+      canvasState.texOpacity = parseInt(e.target.value);
+      const valEl = document.getElementById('ceTexOpacityVal');
+      if (valEl) valEl.textContent = e.target.value + '%';
+      updateBigPreview();
+    });
+
+    // 材质选择 → 一键套用（清除自定义设置）
+    document.querySelectorAll('#canvasModal .ce-mat-card').forEach(card => {
+      card.addEventListener('click', () => {
+        document.querySelectorAll('#canvasModal .ce-mat-card').forEach(m => m.classList.remove('active'));
+        card.classList.add('active');
+        canvasState.mode = 'color';
+        canvasState.bgImage = null;
+        canvasState.texture = null;
+        document.querySelectorAll('#canvasModal .ce-color-dot').forEach(d => d.classList.remove('active'));
+        document.querySelectorAll('#canvasModal .ce-tex-card').forEach(t => t.classList.remove('active'));
+        updateModeHint();
+        // 直接应用材质到排版预览（弹窗内预览用材质背景）
+        const matBg = card.querySelector('.ce-mat-preview').style.background;
+        const isDark = card.dataset.mat === 'night' || card.dataset.mat === 'gold';
+        layoutPreview.style.background = matBg;
+        layoutPreview.style.backgroundImage = '';
+        layoutPreview.style.color = isDark ? '#e0d8d0' : '';
+        layoutPreview.style.textShadow = isDark ? '0 1px 2px rgba(0,0,0,.3)' : '';
+        closeCanvasModal();
+        showToast('材质「' + card.querySelector('span').textContent + '」已应用', 'success');
+      });
+    });
+
+    // 应用画布按钮
+    document.getElementById('ceApplyCanvas')?.addEventListener('click', () => {
+      if (canvasState.mode === 'image' && canvasState.bgImage) {
+        layoutPreview.style.background = `url(${canvasState.bgImage}) center/cover`;
+        layoutPreview.style.backgroundImage = `url(${canvasState.bgImage})`;
+        layoutPreview.style.backgroundSize = 'cover';
+        layoutPreview.style.backgroundPosition = 'center';
+      } else if (canvasState.mode === 'color' && canvasState.bgColor) {
+        const lighter = lightenColor(canvasState.bgColor, 15);
+        let bg = `linear-gradient(${canvasState.gradientDir}, ${canvasState.bgColor}, ${lighter})`;
+        if (canvasState.texture) {
+          const texBgs = {
+            noise: `repeating-conic-gradient(rgba(0,0,0,${canvasState.texOpacity/250}) 0% 25%, transparent 0% 50%) 50%/4px 4px`,
+            paper: `linear-gradient(90deg,rgba(139,105,20,${canvasState.texOpacity/250}) 1px,transparent 1px) 0/4px 100%`,
+            fabric: `repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,${canvasState.texOpacity/250}) 2px,rgba(0,0,0,${canvasState.texOpacity/250}) 4px)`,
+            dots: `radial-gradient(circle,rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px) 0 0/8px 8px`,
+            lines: `repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,${canvasState.texOpacity/250}) 3px,rgba(0,0,0,${canvasState.texOpacity/250}) 4px)`,
+            grid: `linear-gradient(rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px) 0/12px 12px,linear-gradient(90deg,rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px) 0/12px 12px`
+          };
+          const texBg = texBgs[canvasState.texture] || '';
+          if (texBg) bg = texBg + ',' + bg;
+        }
+        layoutPreview.style.background = bg;
+        layoutPreview.style.backgroundImage = '';
+      }
+      // 标记为自定义，持久化背景
+      document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active'));
+      document.getElementById('tplCustomCard').classList.add('active');
+      currentTemplate = 'custom';
+      _savedCanvasBg = layoutPreview.style.background;
+      _savedCanvasBgImage = layoutPreview.style.backgroundImage;
+      closeCanvasModal(false);
+      showToast('画布已应用', 'success');
+    });
+
+    function updateBigPreview() {
+      const preview = document.getElementById('cePreviewBig');
+      if (!preview) return;
+      preview.style.aspectRatio = String(RATIO_MAP[canvasState.ratio] || 16/9);
+      preview.querySelector('.ce-preview-placeholder').style.display = 'none';
+
+      if (canvasState.mode === 'image' && canvasState.bgImage) {
+        preview.style.background = `url(${canvasState.bgImage}) center/cover`;
+        // 实时联动排版预览
+        layoutPreview.style.background = `url(${canvasState.bgImage}) center/cover`;
+        layoutPreview.style.backgroundImage = `url(${canvasState.bgImage})`;
+        layoutPreview.style.backgroundSize = 'cover';
+        layoutPreview.style.backgroundPosition = 'center';
+      } else if (canvasState.mode === 'color' && canvasState.bgColor) {
+        const lighter = lightenColor(canvasState.bgColor, 15);
+        let bg = `linear-gradient(${canvasState.gradientDir}, ${canvasState.bgColor}, ${lighter})`;
+        // 叠加纹理
+        if (canvasState.texture) {
+          const texBgs = {
+            noise: `repeating-conic-gradient(rgba(0,0,0,${canvasState.texOpacity/250}) 0% 25%, transparent 0% 50%) 50%/4px 4px`,
+            paper: `linear-gradient(90deg,rgba(139,105,20,${canvasState.texOpacity/250}) 1px,transparent 1px) 0/4px 100%`,
+            fabric: `repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,${canvasState.texOpacity/250}) 2px,rgba(0,0,0,${canvasState.texOpacity/250}) 4px)`,
+            dots: `radial-gradient(circle,rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px) 0 0/8px 8px`,
+            lines: `repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,${canvasState.texOpacity/250}) 3px,rgba(0,0,0,${canvasState.texOpacity/250}) 4px)`,
+            grid: `linear-gradient(rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px) 0/12px 12px,linear-gradient(90deg,rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px) 0/12px 12px`
+          };
+          const texBg = texBgs[canvasState.texture] || '';
+          if (texBg) bg = texBg + ',' + bg;
+        }
+        preview.style.background = bg;
+        // 实时联动排版预览
+        layoutPreview.style.background = bg;
+        layoutPreview.style.backgroundImage = '';
+      }
+    }
+
+    function lightenColor(hex, percent) {
+      const num = parseInt(hex.replace('#', ''), 16);
+      const r = Math.min(255, (num >> 16) + percent * 2.55);
+      const g = Math.min(255, ((num >> 8) & 0x00FF) + percent * 2.55);
+      const b = Math.min(255, (num & 0x0000FF) + percent * 2.55);
+      return '#' + (0x1000000 + (Math.round(r) << 16) + (Math.round(g) << 8) + Math.round(b)).toString(16).slice(1);
+    }
+
+    function applyTemplateBg(tpl) {
+      _savedCanvasBg = null;
+      _savedCanvasBgImage = null;
+      if (tpl === 'night' || tpl === 'starry') {
+        layoutPreview.style.background = templateBgs[tpl];
+        layoutPreview.style.color = '#e0d8d0';
+        layoutPreview.style.textShadow = '0 1px 2px rgba(0,0,0,.3)';
+      } else {
+        layoutPreview.style.background = templateBgs[tpl] || '';
+        layoutPreview.style.color = '';
+        layoutPreview.style.textShadow = '';
+      }
+    }
+
+    // 自动同步：监听左侧编辑器内容变化（保留格式）
+    function syncLayoutPreview() {
+      if (!editor || !layoutPreview) return;
+      const text = editor.innerText.trim();
+      if (!text) {
+        layoutPreview.innerHTML = '';
+        layoutPreview.style.display = 'none';
+        layoutEmpty.style.display = 'flex';
         return;
       }
-      const btn = document.getElementById('collapseRightPanel');
-      const isCollapsed = previewPanel.classList.toggle('collapsed');
-      btn.textContent = isCollapsed ? '◁' : '▷';
-      if (isCollapsed) {
-        layout.style.gridTemplateColumns = `${leftW} 1fr 42px`;
-      } else {
-        resetGrid();
+      layoutEmpty.style.display = 'none';
+      layoutPreview.style.display = 'block';
+
+      // 解析：保留 innerHTML 格式（加粗/斜体/标题等）
+      const children = Array.from(editor.childNodes);
+      let html = '';
+      let paraIndex = 0;
+
+      for (const node of children) {
+        if (node.nodeType === 1 && node.classList && node.classList.contains('scene-marker')) {
+          html += `<span class="lp-scene-marker">◆ ${node.textContent.trim() || '新场景'}</span>`;
+        } else if (node.nodeType === 1 && node.classList && node.classList.contains('editor-image-wrap')) {
+          const img = node.querySelector('img');
+          if (img) html += `<div class="lp-image-wrap"><img src="${img.src}" alt="配图"></div>`;
+        } else if (node.nodeType === 1) {
+          // 块级元素：保留 innerHTML 以携带 <b>/<i>/<em>/<strong>/<span>/<h2>/<h3> 等格式
+          const inner = node.innerHTML.trim();
+          const txt = node.textContent.trim();
+          if (inner && txt) {
+            html += `<p class="lp-para" data-idx="${paraIndex++}">${inner}</p>`;
+          }
+        } else if (node.nodeType === 3) {
+          // 裸文本节点
+          const txt = node.textContent.trim();
+          if (txt) html += `<p class="lp-para" data-idx="${paraIndex++}">${txt}</p>`;
+        }
+      }
+
+      // 检查分支数据
+      layoutPreview.innerHTML = html;
+      const branches = window._branchData || [];
+      branches.forEach(b => {
+        const paraEl = layoutPreview.querySelector(`.lp-para[data-idx="${b.srcParagraph}"]`);
+        if (paraEl && b.text) {
+          paraEl.insertAdjacentHTML('beforeend',
+            '<span class="lp-branch-hint" title="段落' + (b.targetParagraph + 1) + '">↯ ' + b.text + '</span>');
+        }
+      });
+
+      // 画布联动：保持当前自定义背景
+      if (currentTemplate === 'custom' && _savedCanvasBg) {
+        layoutPreview.style.background = _savedCanvasBg;
+        layoutPreview.style.backgroundImage = _savedCanvasBgImage || '';
+        if (_savedCanvasBgImage) {
+          layoutPreview.style.backgroundSize = 'cover';
+          layoutPreview.style.backgroundPosition = 'center';
+        }
+      }
+    }
+
+    // 监听编辑器变化
+    editor.addEventListener('input', syncLayoutPreview);
+    editor.addEventListener('keyup', syncLayoutPreview);
+    // 初始同步 + 默认桃花画布
+    setTimeout(() => {
+      syncLayoutPreview();
+      // 默认应用桃花（sakura）背景到排版预览
+      if (currentTemplate === 'sakura') {
+        applyTemplateBg('sakura');
+      }
+    }, 500);
+
+    // 插入项工具按钮
+    document.getElementById('layoutInsScene')?.addEventListener('click', () => {
+      // 在编辑器光标处插入场景标记
+      editor.focus();
+      const sel = window.getSelection();
+      if (sel.rangeCount) {
+        const range = sel.getRangeAt(0);
+        const marker = document.createElement('div');
+        marker.className = 'scene-marker';
+        marker.contentEditable = 'true';
+        marker.textContent = '新场景';
+        range.insertNode(marker);
+        range.setStartAfter(marker);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      syncLayoutPreview();
+      showToast('已插入场景标记', 'success');
+    });
+
+    document.getElementById('layoutInsImage')?.addEventListener('click', () => {
+      // 打开图片插入面板（复用已有功能）
+      const popup = document.getElementById('imgInsertPopup');
+      if (popup) popup.style.display = 'block';
+    });
+
+    document.getElementById('layoutInsSep')?.addEventListener('click', () => {
+      editor.focus();
+      const sel = window.getSelection();
+      if (sel.rangeCount) {
+        const range = sel.getRangeAt(0);
+        const sep = document.createElement('div');
+        sep.textContent = '— ✦ —';
+        sep.style.textAlign = 'center';
+        sep.style.color = 'var(--text-dim)';
+        sep.style.padding = '8px 0';
+        sep.style.letterSpacing = '4px';
+        range.insertNode(sep);
+      }
+      syncLayoutPreview();
+      showToast('已插入分割线', 'success');
+    });
+
+    document.getElementById('layoutInsBranch')?.addEventListener('click', () => {
+      const branchPanel = document.getElementById('branchPanel');
+      if (branchPanel) {
+        branchPanel.style.display = branchPanel.style.display === 'none' ? 'block' : 'none';
       }
     });
-  }
 
-  // ── VN Player 控制 ──
-  function bindVNControls() {
-    document.getElementById('expandPreview')?.addEventListener('click', () => {
-      const modal = document.getElementById('fullscreenModal');
-      if (modal) modal.style.display = 'flex';
-    });
+    // 暴露接口
+    window.LayoutPanel = {
+      sync: syncLayoutPreview,
+      getTemplate: () => currentTemplate,
+      getPreviewHTML: () => layoutPreview.innerHTML,
+      getPreviewBg: () => layoutPreview.style.background
+    };
 
-    document.getElementById('vnAuto')?.addEventListener('click', function() {
-      const active = this.dataset.active === 'true';
-      this.dataset.active = active ? 'false' : 'true';
-      this.style.color = active ? '' : 'var(--accent-purple)';
-      if (!active) startAutoPlay();
-    });
-  }
-
-  let autoTimer = null;
-  function startAutoPlay() {
-    clearInterval(autoTimer);
-    autoTimer = setInterval(() => {
-      const nextBtn = document.getElementById('vnNext');
-      const progress = document.getElementById('vnProgress')?.textContent || '0 / 0';
-      const [cur, total] = progress.split(' / ').map(Number);
-      if (cur >= total) {
-        clearInterval(autoTimer);
-        autoTimer = null;
-        const btn = document.getElementById('vnAuto');
-        if (btn) { btn.dataset.active = 'false'; btn.style.color = ''; }
-      } else {
-        nextBtn?.click();
+    // 生成 HTML 按钮
+    document.getElementById('generateHtmlBtn')?.addEventListener('click', () => {
+      const title = document.getElementById('vnTitle')?.value || '未命名视觉小说';
+      const author = Auth.currentUser()?.username || '佚名';
+      const scenes = VNStore.getCurrentScenes();
+      if (!scenes.length) {
+        showToast('请先用暮舟生成场景脚本', '');
+        return;
       }
-    }, 3500);
+      const html = HtmlGenerator.generate({
+        title,
+        author,
+        scenes,
+        template: currentTemplate,
+        mode: 'scroll',
+        options: { petals: true, scrollReveal: true, fontSize: '16px' }
+      });
+      HtmlGenerator.download(html, title.replace(/[<>:\"/\\|?*]/g, '_') + '.html');
+      showToast('HTML 已生成并开始下载', 'success');
+    });
   }
-  // 页面卸载清理
-  window.addEventListener('beforeunload', () => {
-    if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
-  });
 
   // ── 导出功能 ──
   function bindPublish() {
+    // 填充作品选择器
+    const sel = document.getElementById('pubProjectSelect');
+    if (sel) {
+      const works = VNStore.getWorks();
+      sel.innerHTML = '<option value="">—— 当前会话场景 ——</option>' +
+        works.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+    }
+
     document.getElementById('exportWebBtn')?.addEventListener('click', exportToHTML);
     document.getElementById('exportScriptBtn')?.addEventListener('click', exportToMarkdown);
-    document.getElementById('exportPackBtn')?.addEventListener('click', () => showToast('离线包打包中…', ''));
+    document.getElementById('exportPackBtn')?.addEventListener('click', () => showToast('离线包功能开发中…', ''));
   }
 
   function exportToHTML() {
-    const id = document.getElementById('pubProjectSelect')?.value;
-    const work = id ? VNStore.getWork(id) : null;
-    const title = work?.name || 'Phantom VN';
-    const scenes = (work?.scenes || VNStore.getCurrentScenes());
+    // 读取发布面板设置
+    const pubTemplate = document.getElementById('pubTemplateSelect')?.value || 'sakura';
+    const pubMode = document.getElementById('pubModeSelect')?.value || 'scroll';
 
-    const scenesJson = JSON.stringify(scenes);
-    const html = `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title}</title>
-<style>
-body{margin:0;background:#0d0d1a;color:#e8e6ff;font-family:serif;display:flex;align-items:center;justify-content:center;height:100vh;overflow:hidden}
-#scene{width:100vw;height:100vh;position:relative;overflow:hidden}
-#bg{position:absolute;inset:0;background-size:cover;background-position:center;transition:opacity .8s}
-#dlg{position:absolute;bottom:0;left:0;right:0;background:rgba(10,10,25,.9);border-top:1px solid rgba(124,111,255,.3);padding:16px 24px 20px}
-#speaker{color:#7c6fff;font-size:14px;margin-bottom:8px;font-weight:500}
-#text{font-size:16px;line-height:2}
-#ctrl{position:absolute;top:12px;right:12px;display:flex;gap:6px}
-button{background:rgba(0,0,0,.5);border:.5px solid rgba(255,255,255,.1);color:rgba(255,255,255,.7);border-radius:6px;padding:4px 12px;cursor:pointer;font-family:serif}
-button:hover{background:rgba(124,111,255,.3);color:#fff}
-#progress{font-size:11px;color:rgba(255,255,255,.3);align-self:center}
-</style>
-</head>
-<body>
-<div id="scene">
-  <div id="bg"></div>
-  <div id="dlg">
-    <div id="speaker">旁白</div>
-    <div id="text">点击任意位置开始…</div>
-  </div>
-  <div id="ctrl">
-    <button id="prev">◁</button>
-    <span id="progress">0 / ${scenes.length}</span>
-    <button id="next">▷</button>
-  </div>
-</div>
-<script>
-var scenes=${scenesJson};
-var cur=0;
-function render(i){
-  var s=scenes[i];if(!s)return;
-  document.getElementById('speaker').textContent=s.speaker||'旁白';
-  document.getElementById('text').textContent=s.text||'';
-  var bg=document.getElementById('bg');
-  if(s.bgImage){bg.style.backgroundImage='url('+s.bgImage+')';}
-  else{bg.style.background='linear-gradient(180deg,#0d0d2e,#1a1a3e)'}
-  document.getElementById('progress').textContent=(i+1)+' / '+scenes.length;
-}
-render(0);
-document.getElementById('next').onclick=function(){if(cur<scenes.length-1){cur++;render(cur);}};
-document.getElementById('prev').onclick=function(){if(cur>0){cur--;render(cur);}};
-document.addEventListener('keydown',function(e){
-  if(e.key==='ArrowRight'||e.key===' ')document.getElementById('next').click();
-  if(e.key==='ArrowLeft')document.getElementById('prev').click();
-});
-<\/script>
-</body>
-</html>`;
-    downloadText(html, title + '.html');
-    showToast('HTML 已导出', 'success');
+    // 获取场景数据
+    const workId = document.getElementById('pubProjectSelect')?.value;
+    const work = workId ? VNStore.getWork(workId) : null;
+    const title = work?.name || document.getElementById('vnTitle')?.value || '未命名视觉小说';
+    const author = work?.author || 'Phantom VN';
+    const scenes = work?.scenes?.length ? work.scenes : VNStore.getCurrentScenes();
+
+    if (!scenes || !scenes.length) {
+      showToast('暂无场景数据，请先在创作工坊中生成场景', 'error');
+      return;
+    }
+
+    // 收集排版面板的当前设置（如果在 studio 模式下）
+    const lpContent = document.getElementById('lpContent');
+    const layoutTemplate = lpContent?.closest('#layoutPanel')?.querySelector('.template-card.active')?.dataset?.tpl;
+    const finalTemplate = layoutTemplate && layoutTemplate !== 'custom' ? layoutTemplate : pubTemplate;
+
+    // 调用 HtmlGenerator 生成
+    const html = HtmlGenerator.generate({
+      title,
+      author,
+      scenes,
+      template: finalTemplate,
+      mode: pubMode,
+      options: {
+        petals: true,
+        scrollReveal: true,
+        fontSize: '16px',
+        showSpeaker: true
+      }
+    });
+
+    HtmlGenerator.download(html, title + '.html');
+    showToast('HTML 视觉小说已导出', 'success');
   }
 
   function exportToMarkdown() {
-    const scenes = VNStore.getCurrentScenes();
+    const workId = document.getElementById('pubProjectSelect')?.value;
+    const work = workId ? VNStore.getWork(workId) : null;
+    const title = work?.name || document.getElementById('vnTitle')?.value || '视觉小说剧本';
+    const scenes = work?.scenes?.length ? work.scenes : VNStore.getCurrentScenes();
     if (!scenes.length) { showToast('暂无场景数据', 'error'); return; }
+
     const md = scenes.map((s, i) =>
       `## 场景 ${i + 1}：${s.background || ''}\n\n**${s.speaker || '旁白'}**\n\n> ${s.text || ''}\n`
     ).join('\n---\n\n');
-    downloadText('# 视觉小说剧本\n\n' + md, '剧本_' + Date.now() + '.md');
+
+    const blob = new Blob(['# ' + title + '\n\n' + md], { type: 'text/markdown;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = title + '.md';
+    a.click();
+    URL.revokeObjectURL(a.href);
     showToast('剧本已导出', 'success');
   }
 

@@ -15,13 +15,13 @@
 <!-- 花瓣飘落容器 -->
 <div class="petal-fall-container" id="petalFall"></div>
 <!-- Logo 覆盖文字（复古主题下显示） -->
-<div class="logo-overlay-text" id="logoOverlay">我们都是过去式的幽灵</div>
+<div class="logo-overlay-text" id="logoOverlay"><span class="lot-inner">我们都是过去式的幽灵</span></div>
 
 <!-- ===== TOP NAV ===== -->
 <header class="topbar">
   <div class="topbar-left">
     <div class="logo">
-      <img class="logo-icon" src="assets/微信图片_20260527223222_269_1.jpeg" alt="logo">
+      <img class="logo-icon" src="assets/微信图片_20260527223222_269_1.jpg" alt="logo">
       <span class="logo-text">Phantom <em>Wild Visual Novel</em></span>
     </div>
     <!-- Tab buttons moved to dashboard pages -->
@@ -382,15 +382,11 @@
             <div class="text-stats" id="textStats">字数：0 &nbsp;|&nbsp; 段落：0</div>
           </div>
 
-          <!-- Selection Action Bar (appears on text selection) -->
-          <div class="selection-actions" id="selectionActions" style="display:none">
-            <span class="sel-label">已选中 <span id="selCount">0</span> 字</span>
-            <button class="agent-quick-btn ziwen" data-agent="ziwen" title="字吻 · 优化文段">
-              ✦ 字吻优化
-            </button>
-            <button class="agent-quick-btn huahua" data-agent="huahua" title="花花 · 生成图片">
-              ✿ 花花配图
-            </button>
+          <!-- 浮动选中气泡（文本选区附近自动弹出） -->
+          <div class="selection-popup" id="selectionPopup">
+            <span class="sp-count">已选 <span id="spCount">0</span> 字</span>
+            <button class="sp-btn sp-btn-ziwen" data-agent="ziwen" title="字吻 · 优化文段">✦ 字吻优化</button>
+            <button class="sp-btn sp-btn-huahua" data-agent="huahua" title="花花 · 生成图片">✿ 花花配图</button>
           </div>
 
           <!-- ── 分支剧情面板 ── -->
@@ -587,9 +583,7 @@
                 <select id="huahua-ratio">
                   <option value="16:9">横版 16:9</option>
                   <option value="9:16">竖版 9:16</option>
-                  <option value="1:1">方形 1:1</option>
-                  <option value="3:4">竖版 3:4</option>
-                </select>
+                                  </select>
               </div>
 
               <!-- 参考图上传 -->
@@ -613,7 +607,7 @@
               </div>
 
               <div class="chat-input-row">
-                <textarea class="chat-input" id="huahua-input" placeholder="描述你想要的画面，例如：夜色下的长安城墙，飞雪中的武士身影…" rows="3"></textarea>
+                <textarea class="chat-input" id="huahua-input" placeholder="描述你想要的画面" rows="3"></textarea>
                 <button class="send-btn huahua-send" id="huahua-send">↗</button>
               </div>
             </div>
@@ -692,46 +686,69 @@
         </div>
       </section>
 
-      <!-- RIGHT PANEL: 视觉小说预览 -->
-      <aside class="panel panel-right" id="previewPanel">
+      <!-- RIGHT PANEL: 排版设计 -->
+      <aside class="panel panel-right" id="layoutPanel">
         <div class="panel-header">
           <span class="panel-title">
-            <span class="panel-icon"><img src="assets/微信图片_20260527223222_269_1.jpg" alt="" class="deco-icon-sm"></span> VN 预览
+            <span class="panel-icon"><img src="assets/微信图片_20260527223222_269_1.jpg" alt="" class="deco-icon-sm"></span> 排版设计
           </span>
-          <button class="icon-btn panel-expand-btn" id="expandPreviewPanel" title="向左展开一倍">⤢</button>
           <button class="icon-btn panel-collapse-btn" id="collapseRightPanel" title="收起">▷</button>
           <div class="panel-controls">
-            <button class="icon-btn" id="expandPreview" title="全屏预览">⊞</button>
+            <button class="btn-primary btn-sm" id="generateHtmlBtn" title="生成独立HTML文件">⬇ 生成HTML</button>
           </div>
         </div>
-        <div class="panel-body preview-body" id="previewPanelBody">
-          <div class="vn-player" id="vnPlayer">
-            <div class="vn-scene" id="vnScene">
-              <div class="vn-bg" id="vnBg" style="background: linear-gradient(180deg, #fff0f5 0%, #ffe4ec 100%)"></div>
-              <div class="vn-sprite" id="vnSprite"></div>
-              <div class="vn-dialogue-box" id="vnDialogueBox">
-                <div class="vn-speaker" id="vnSpeaker">旁白</div>
-                <div class="vn-text" id="vnText">在这里，你的故事将以视觉小说的形式展开。<br><span class="cursor-blink">▌</span></div>
+        <div class="panel-body layout-body" id="layoutPanelBody">
+
+          <!-- 1. 画布 -->
+          <div class="layout-section">
+            <div class="layout-section-title">🎨 画布</div>
+            <div class="template-grid" id="templateGrid">
+              <div class="template-card active" data-tpl="sakura" style="background:linear-gradient(180deg,#fff0f5,#ffe4ec)">
+                <span>🌸 桃花</span>
               </div>
-              <div class="vn-controls-bar">
-                <button class="vn-ctrl-btn" id="vnPrev">◁</button>
-                <span class="vn-progress" id="vnProgress">0 / 0</span>
-                <button class="vn-ctrl-btn" id="vnNext">▷</button>
-                <button class="vn-ctrl-btn" id="vnAuto" title="自动播放">⊙</button>
-                <button class="vn-ctrl-btn" id="vnSkip" title="快进">⊕</button>
+              <div class="template-card" data-tpl="night" style="background:linear-gradient(180deg,#1a1a2e,#16213e)">
+                <span>🌙 夜空</span>
+              </div>
+              <div class="template-card" data-tpl="parchment" style="background:linear-gradient(180deg,#f5e6c8,#e8d5a8)">
+                <span>📜 羊皮纸</span>
+              </div>
+              <div class="template-card" data-tpl="ink" style="background:linear-gradient(180deg,#f5f0e8,#e8e0d0)">
+                <span>🖋 水墨</span>
+              </div>
+              <div class="template-card" data-tpl="starry" style="background:linear-gradient(180deg,#0d1b2a,#1b2838)">
+                <span>✨ 星空</span>
+              </div>
+              <div class="template-card" data-tpl="custom" id="tplCustomCard" style="background:var(--bg-card);border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer">
+                <span style="font-size:11px;color:var(--text-dim)">＋ 自定义</span>
               </div>
             </div>
           </div>
-          <!-- Resources Gallery -->
-          <div class="resource-gallery" id="resourceGallery">
-            <div class="gallery-header">
-              <span>资源面板</span>
-              <button class="icon-btn" id="addImageBtn" title="添加图片">＋</button>
-            </div>
-            <div class="gallery-grid" id="galleryGrid">
-              <div class="gallery-empty">暂无资源，使用花花生成图片后会出现在这里</div>
+
+          <!-- 2. 排版预览区 -->
+          <div class="layout-section">
+            <div class="layout-section-title">👁 排版预览</div>
+            <div class="layout-preview-wrap">
+              <div class="layout-preview" id="layoutPreview">
+                <div class="lp-empty" id="lpEmpty">
+                  <span style="font-size:28px">📖</span>
+                  <p>在左侧编辑器中输入文字<br>此处将自动展示排版效果</p>
+                </div>
+                <div class="lp-content" id="lpContent" style="display:none"></div>
+              </div>
             </div>
           </div>
+
+          <!-- 3. 插入项工具 -->
+          <div class="layout-section">
+            <div class="layout-section-title">📌 插入项</div>
+            <div class="layout-insert-tools">
+              <button class="layout-ins-btn" id="layoutInsScene" title="插入场景标记">◆ 场景标记</button>
+              <button class="layout-ins-btn" id="layoutInsImage" title="从素材库选择图片">🖼 插入配图</button>
+              <button class="layout-ins-btn" id="layoutInsSep" title="插入分割线">— 分割线</button>
+              <button class="layout-ins-btn" id="layoutInsBranch" title="添加分支选项">↯ 分支选项</button>
+            </div>
+          </div>
+
         </div>
       </aside>
 
@@ -797,6 +814,19 @@
           <select class="vn-select" id="pubProjectSelect">
             <option value="">—— 选择作品 ——</option>
           </select>
+          <div class="pub-export-opts">
+            <select class="vn-select" id="pubTemplateSelect">
+              <option value="sakura">🌸 桃花</option>
+              <option value="night">🌙 夜空</option>
+              <option value="parchment">📜 羊皮纸</option>
+              <option value="ink">🖋 水墨</option>
+              <option value="starry">✨ 星空</option>
+            </select>
+            <select class="vn-select" id="pubModeSelect">
+              <option value="scroll">📜 滚动模式</option>
+              <option value="theater">🎭 剧场模式</option>
+            </select>
+          </div>
           <button class="btn-primary" id="exportWebBtn">导出 HTML</button>
         </div>
         <div class="pub-card">
@@ -1547,6 +1577,131 @@
   </div>
 </div>
 
+<!-- ===== 画布编辑器弹窗 ===== -->
+<div class="modal-overlay canvas-modal-overlay" id="canvasModal" style="display:none">
+  <div class="canvas-modal-dialog">
+    <div class="canvas-modal-header">
+      <span class="canvas-modal-title">🎨 自定义画布</span>
+      <button class="canvas-modal-close" id="canvasModalClose">✕</button>
+    </div>
+    <div class="canvas-modal-body">
+      <!-- Tab 切换 -->
+      <div class="canvas-editor-tabs">
+        <button class="ce-tab active" data-ce-tab="canvas">🎨 画布</button>
+        <button class="ce-tab" data-ce-tab="texture">🧩 纹理</button>
+        <button class="ce-tab" data-ce-tab="material">💎 材质</button>
+      </div>
+
+      <!-- 画布 Tab -->
+      <div class="ce-panel" id="cePanelCanvas">
+        <div class="ce-modal-grid">
+          <!-- 左：控制 -->
+          <div class="ce-modal-left">
+            <div class="ce-section">
+              <div class="ce-section-title">纯色背景</div>
+              <div class="ce-color-grid">
+                <button class="ce-color-dot active" data-color="#fff0f5" style="background:#fff0f5" title="浅樱"></button>
+                <button class="ce-color-dot" data-color="#1a1a2e" style="background:#1a1a2e" title="深空"></button>
+                <button class="ce-color-dot" data-color="#f5e6c8" style="background:#f5e6c8" title="羊皮"></button>
+                <button class="ce-color-dot" data-color="#f5f0e8" style="background:#f5f0e8" title="宣纸"></button>
+                <button class="ce-color-dot" data-color="#0d1b2a" style="background:#0d1b2a" title="星空"></button>
+                <button class="ce-color-dot" data-color="#e8f4f0" style="background:#e8f4f0" title="薄荷"></button>
+                <button class="ce-color-dot" data-color="#2a1a2e" style="background:#2a1a2e" title="暗紫"></button>
+                <button class="ce-color-dot" data-color="#1a2a1a" style="background:#1a2a1a" title="深林"></button>
+              </div>
+              <div class="ce-row" style="margin-top:8px">
+                <span class="ce-label">取色器</span>
+                <input type="color" id="ceCustomColor" class="ce-color-input" value="#e8d5c0">
+              </div>
+              <div class="ce-row" style="margin-top:8px">
+                <span class="ce-label">渐变</span>
+                <div class="ce-btn-row">
+                  <button class="ce-dir-btn active" data-dir="180deg">↓</button>
+                  <button class="ce-dir-btn" data-dir="90deg">→</button>
+                  <button class="ce-dir-btn" data-dir="135deg">↘</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="ce-section">
+              <div class="ce-section-title">图片背景</div>
+              <label class="ce-upload-btn">
+                📁 本地上传
+                <input type="file" id="ceBgImage" accept="image/*" hidden>
+              </label>
+              <div class="ce-row" style="margin-top:8px">
+                <input type="url" id="ceBgUrl" class="ce-input" placeholder="或粘贴图片URL…">
+                <button class="btn-ghost btn-xs" id="ceApplyUrl">应用</button>
+              </div>
+              <div class="ce-mode-hint" id="ceModeHint">当前：纯色模式</div>
+              <div class="ce-image-hint">💡 画布长度受文本篇幅影响，请在上传时纳入考虑~</div>
+            </div>
+
+            <div class="ce-section">
+              <div class="ce-section-title">预览比例</div>
+              <div class="ce-ratio-row">
+                <button class="ce-ratio-btn active" data-ratio="16:9">16:9</button>
+                <button class="ce-ratio-btn" data-ratio="9:16">9:16</button>
+                <button class="ce-ratio-btn" data-ratio="4:3">4:3</button>
+                <button class="ce-ratio-btn" data-ratio="1:1">1:1</button>
+                <button class="ce-ratio-btn" data-ratio="3:4">3:4</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右：大预览 -->
+          <div class="ce-modal-right">
+            <div class="ce-preview-big-wrap">
+              <div class="ce-preview-big" id="cePreviewBig" style="background:linear-gradient(180deg,#fff0f5,#ffe4ec)">
+                <span class="ce-preview-placeholder">预览效果</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 纹理 Tab -->
+      <div class="ce-panel" id="cePanelTexture" style="display:none">
+        <div class="ce-section">
+          <div class="ce-section-title">预设纹理（叠加在背景之上）</div>
+          <div class="ce-texture-grid">
+            <div class="ce-tex-card" data-tex="noise" style="background: repeating-conic-gradient(rgba(0,0,0,.03) 0% 25%, transparent 0% 50%) 50%/4px 4px"><span>噪点</span></div>
+            <div class="ce-tex-card" data-tex="paper" style="background: linear-gradient(90deg,rgba(139,105,20,.04) 1px,transparent 1px) 0/4px 100%"><span>纸张</span></div>
+            <div class="ce-tex-card" data-tex="fabric" style="background: repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.035) 2px,rgba(0,0,0,.035) 4px)"><span>布纹</span></div>
+            <div class="ce-tex-card" data-tex="dots" style="background: radial-gradient(circle,rgba(0,0,0,.05) 1px,transparent 1px) 0 0/8px 8px"><span>圆点</span></div>
+            <div class="ce-tex-card" data-tex="lines" style="background: repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.04) 3px,rgba(0,0,0,.04) 4px)"><span>横线</span></div>
+            <div class="ce-tex-card" data-tex="grid" style="background: linear-gradient(rgba(0,0,0,.04) 1px,transparent 1px) 0/12px 12px,linear-gradient(90deg,rgba(0,0,0,.04) 1px,transparent 1px) 0/12px 12px"><span>网格</span></div>
+          </div>
+        </div>
+        <div class="ce-row" style="margin-top:12px">
+          <span class="ce-label">纹理强度</span>
+          <input type="range" id="ceTexOpacity" min="0" max="100" value="40" class="ce-range" style="flex:1;margin-left:8px">
+          <span id="ceTexOpacityVal" style="font-size:10px;color:var(--text-dim);min-width:28px">40%</span>
+        </div>
+      </div>
+
+      <!-- 材质 Tab -->
+      <div class="ce-panel" id="cePanelMaterial" style="display:none">
+        <div class="ce-section">
+          <div class="ce-section-title">预设材质（一键套用）</div>
+          <div class="ce-material-grid ce-material-grid-big">
+            <div class="ce-mat-card" data-mat="rice" style="background:linear-gradient(180deg,#faf6f0,#e8e0d0)"><div class="ce-mat-preview" style="background: repeating-linear-gradient(0deg,transparent,transparent 1px,rgba(139,105,20,.015) 1px,rgba(139,105,20,.015) 2px)"></div><span>水墨宣纸</span></div>
+            <div class="ce-mat-card" data-mat="night" style="background:linear-gradient(180deg,#1a1a2e,#16213e)"><div class="ce-mat-preview" style="background: radial-gradient(1px 1px at 20% 30%,rgba(255,255,255,.08),transparent),radial-gradient(1px 1px at 60% 50%,rgba(255,255,255,.05),transparent),radial-gradient(1.5px 1.5px at 40% 70%,rgba(255,255,255,.06),transparent);background-size:100px 100px"></div><span>星空夜幕</span></div>
+            <div class="ce-mat-card" data-mat="parch" style="background:linear-gradient(180deg,#f5e6c8,#e8d5a8)"><div class="ce-mat-preview" style="background: repeating-linear-gradient(90deg,rgba(139,105,20,.04) 1px,transparent 1px) 0/3px 100%,radial-gradient(ellipse at 30% 20%,rgba(139,105,20,.03) 0%,transparent 50%)"></div><span>古旧羊皮</span></div>
+            <div class="ce-mat-card" data-mat="silk" style="background:linear-gradient(180deg,#faf5f8,#f0e8ec)"><div class="ce-mat-preview" style="background: repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(200,150,180,.03) 2px,rgba(200,150,180,.03) 4px)"></div><span>绢丝绸缎</span></div>
+            <div class="ce-mat-card" data-mat="mist" style="background:linear-gradient(180deg,#e8f0f4,#d8e4ec)"><div class="ce-mat-preview" style="background: radial-gradient(ellipse at 50% 40%,rgba(120,160,200,.06) 0%,transparent 60%)"></div><span>晨雾薄纱</span></div>
+            <div class="ce-mat-card" data-mat="gold" style="background:linear-gradient(180deg,#1a1410,#2a1f14)"><div class="ce-mat-preview" style="background: radial-gradient(ellipse at 50% 30%,rgba(200,160,100,.08) 0%,transparent 50%),repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(200,160,100,.02) 2px,rgba(200,160,100,.02) 4px)"></div><span>鎏金暗纹</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="canvas-modal-footer">
+      <button class="btn-ghost" id="canvasModalCancel">取消</button>
+      <button class="btn-primary" id="ceApplyCanvas">应用画布</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== FOOTER ===== -->
 <footer class="site-footer">
   <div class="footer-inner">
@@ -1568,6 +1723,7 @@
 <script src="js/parser.js"></script>
 <script src="js/agents.js"></script>
 <script src="js/manager.js"></script>
+<script src="js/html-generator.js"></script>
 <script src="js/app.js"></script>
 <script src="js/auth.js"></script>
 
