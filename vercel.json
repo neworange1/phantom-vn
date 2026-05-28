@@ -1,0 +1,20 @@
+{
+  "functions": {
+    "api/chat.js": { "maxDuration": 30 },
+    "api/user.js": { "maxDuration": 10 },
+    "api/stories.js": { "maxDuration": 10 },
+    "api/chapters.js": { "maxDuration": 10 },
+    "api/paragraphs.js": { "maxDuration": 10 },
+    "api/branches.js": { "maxDuration": 10 },
+    "api/social.js": { "maxDuration": 10 },
+    "api/image.js": { "maxDuration": 30 },
+    "api/health.js": { "maxDuration": 10 }
+  },
+  "rewrites": [
+    { "source": "/story/:id", "destination": "/index.html" },
+    { "source": "/explore", "destination": "/index.html" },
+    { "source": "/profile/:username", "destination": "/index.html" },
+    { "source": "/explore.html", "destination": "/index.html" },
+    { "source": "/story.html", "destination": "/index.html" }
+  ]
+}
