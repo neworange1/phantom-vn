@@ -5,6 +5,9 @@
 
 const App = (() => {
 
+  // 编辑器选区追踪（跨模块共享）
+  let _lastEditorRange = null;
+
   // ── 初始化 ──
   function init() {
     bindTabNav();
@@ -93,15 +96,24 @@ const App = (() => {
     // 核心思路：不再依赖脆弱的 persist-selection span 包裹机制。
     // 用 selectionchange 事件持续把"当前选区"存下，按钮点击时直接恢复并用 execCommand 执行。
 
-    let _lastEditorRange = null;       // 编辑器内最后一次选区 Range 快照
     let _formatBtnClicked = false;     // 防抖：标记是否有格式按钮被点击（避免 mouseup 清选区）
 
     // 持续追踪编辑器内的选区变化
     document.addEventListener('selectionchange', () => {
+      // 快速路径：如果活跃元素不在编辑器相关区域内且非格式按钮交互，跳过
+      const ae = document.activeElement;
+      if (!_formatBtnClicked && ae && !editor.contains(ae)
+          && !ae.closest('#formatBar') && !ae.closest('#branchPanel')
+          && !ae.closest('#imgInsertPopup') && !ae.classList.contains('fmt-btn')) {
+        if (_lastEditorRange) _lastEditorRange = null;
+        return;
+      }
+
       const sel = window.getSelection();
       if (!sel || !sel.rangeCount || sel.isCollapsed) {
-        // 如果格式按钮刚被点击（mousedown发生在selectionchange之前），不要清空快照
+        // 如果格式按钮/工具栏刚被点击，不要清空快照
         if (_formatBtnClicked) return;
+        if (ae && (ae.closest('#formatBar') || ae.closest('#branchPanel') || ae.closest('#imgInsertPopup') || ae.classList.contains('fmt-btn'))) return;
         _lastEditorRange = null;
         return;
       }
@@ -111,13 +123,11 @@ const App = (() => {
       }
     });
 
-    // 通用格式执行器
+    // 通用格式执行器（纯 DOM 操作，不依赖 execCommand）
     function _execFormat(cmd, arg) {
       const sel = window.getSelection();
-      // 确保编辑器聚焦
       editor.focus();
 
-      // 优先使用当前选区，否则回退到追踪的快照
       let range = null;
       if (sel && sel.rangeCount && !sel.isCollapsed) {
         const r = sel.getRangeAt(0);
@@ -128,30 +138,113 @@ const App = (() => {
       if (!range && _lastEditorRange) {
         range = _lastEditorRange;
       }
-
-      if (range) {
-        sel.removeAllRanges();
-        sel.addRange(range);
-      } else {
-        // 无选区：对光标所在行或光标位置执行
-        if (editor.contains(sel.anchorNode)) {
-          // 对当前光标所在文本块执行
-          try {
-            document.execCommand(cmd, false, arg);
-          } catch (_) {}
-          return;
+      if (!range || range.collapsed) {
+        // 无选区：尝试对光标所在行应用块格式
+        if (cmd === 'formatBlock' && sel.anchorNode && editor.contains(sel.anchorNode)) {
+          let line = sel.anchorNode;
+          while (line && line !== editor && line.nodeName !== 'P' && line.nodeName !== 'DIV') {
+            line = line.parentNode;
+          }
+          // 绝不可包裹编辑器自身（editor 也是 DIV，会摧毁整个编辑区）
+          if (line && line !== editor && (line.nodeName === 'P' || line.nodeName === 'DIV')) {
+            _wrapNode(line, arg);
+            updateTextStats();
+          }
         }
-        return; // 真的没有任何有效选区
+        return;
       }
 
-      try {
-        document.execCommand(cmd, false, arg);
-      } catch (_) {}
+      sel.removeAllRanges();
+      sel.addRange(range);
 
-      // 格式执行完更新快照
+      if (cmd === 'formatBlock') {
+        _applyBlockFormat(range, arg);
+      } else {
+        _applyInlineFormat(range, cmd);
+      }
+      updateTextStats();
+
+      // 更新快照
       if (sel.rangeCount) {
         _lastEditorRange = sel.getRangeAt(0).cloneRange();
       }
+    }
+
+    // 块格式（H2/H3）
+    function _applyBlockFormat(range, tag) {
+      const block = document.createElement(tag);
+      try {
+        // 优先使用 surroundContents（单一块内安全）
+        range.surroundContents(block);
+      } catch (_e) {
+        // 跨块选区回退：extractContents 后再包裹（有 DOM 拆分风险，但无可避免）
+        const frag = range.extractContents();
+        if (!frag || !frag.firstChild) return;
+        block.appendChild(frag);
+        range.insertNode(block);
+      }
+      // 光标移到块后
+      range.setStartAfter(block);
+      range.collapse(true);
+      const s = window.getSelection();
+      s.removeAllRanges();
+      s.addRange(range);
+    }
+
+    function _wrapNode(node, tag) {
+      const block = document.createElement(tag);
+      block.innerHTML = node.innerHTML;
+      node.replaceWith(block);
+    }
+
+    // 内联格式（B / I），支持 toggle
+    function _applyInlineFormat(range, cmd) {
+      const tag = cmd === 'bold' ? 'B' : cmd === 'italic' ? 'I' : null;
+      if (!tag) return;
+
+      // 检查是否已在同类型标签内 → toggle off
+      let anc = range.commonAncestorContainer;
+      while (anc && anc !== editor) {
+        if (anc.nodeName === tag) {
+          _unwrapNode(anc);
+          return;
+        }
+        anc = anc.parentNode;
+      }
+
+      // 检查选区内容是否完全被同标签包裹 → toggle off
+      const selContents = range.cloneContents();
+      const wrapper = selContents.querySelectorAll(tag.toLowerCase());
+      if (wrapper.length === 1 && selContents.childNodes.length === 1
+          && selContents.firstChild.nodeName === tag) {
+        const text = selContents.firstChild.textContent;
+        range.deleteContents();
+        range.insertNode(document.createTextNode(text));
+        range.collapse(false);
+        const s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(range);
+        return;
+      }
+
+      // 正常包裹
+      const frag = range.extractContents();
+      const wrap = document.createElement(tag.toLowerCase());
+      wrap.appendChild(frag);
+      range.insertNode(wrap);
+      range.setStartAfter(wrap);
+      range.collapse(true);
+      const s = window.getSelection();
+      s.removeAllRanges();
+      s.addRange(range);
+    }
+
+    function _unwrapNode(el) {
+      const parent = el.parentNode;
+      while (el.firstChild) {
+        parent.insertBefore(el.firstChild, el);
+      }
+      parent.removeChild(el);
     }
 
     // 绑定按钮（mousedown 触发，阻止默认以保持选区）
@@ -161,13 +254,18 @@ const App = (() => {
       btn.addEventListener('mousedown', e => {
         e.preventDefault();
         e.stopPropagation();
+        btn.classList.add('fmt-active');
         _formatBtnClicked = true;
         handler();
         // 延迟清除标记，让 selectionchange 有时间拿到新状态
         setTimeout(() => { _formatBtnClicked = false; }, 150);
       });
       // mouseup 和 click 全部拦截，防止编辑器失焦
-      btn.addEventListener('mouseup', e => { e.preventDefault(); e.stopPropagation(); });
+      btn.addEventListener('mouseup', e => {
+        e.preventDefault(); e.stopPropagation();
+        btn.classList.remove('fmt-active');
+      });
+      btn.addEventListener('mouseleave', () => { btn.classList.remove('fmt-active'); });
       btn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); });
     }
 
@@ -232,9 +330,11 @@ const App = (() => {
         pendingCount++;
         if (!rafId) rafId = requestAnimationFrame(flushPending);
 
-        // 累计计数
+        // 累计计数（上限 999999，每10次写一次 localStorage 减少写入）
         muyuTotal++;
-        localStorage.setItem('muyuTotal', muyuTotal);
+        if (muyuTotal <= 999999 && muyuTotal % 10 === 0) {
+          localStorage.setItem('muyuTotal', muyuTotal);
+        }
 
         // 彩蛋1：满100次功德闪光
         if (muyuTotal === 100) spawnMeritFlash();
@@ -258,16 +358,95 @@ const App = (() => {
       }
     });
 
+    // ══════ 自定义撤销栈（替代废弃的 execCommand('undo'/'redo')）══════
+    const undoStack = (() => {
+      const _stack = [];
+      let _index = -1;
+      const MAX = 50;
+      let _debounce = null;
+      let _lastSaved = null;
+
+      function save() {
+        const html = editor.innerHTML;
+        if (html === _lastSaved) return;
+        // 清除当前位置之后的所有 redo
+        if (_index < _stack.length - 1) {
+          _stack.length = _index + 1;
+        }
+        _stack.push(html);
+        if (_stack.length > MAX) { _stack.shift(); } else { _index++; }
+        _lastSaved = html;
+      }
+
+      function undo() {
+        if (_index <= 0) return false;
+        _index--;
+        _lastSaved = _stack[_index];
+        editor.innerHTML = _lastSaved;
+        _restoreCursorToEnd();
+        // 触发 input 事件 → updateTextStats + syncLayoutPreview
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      }
+
+      function redo() {
+        if (_index >= _stack.length - 1) return false;
+        _index++;
+        _lastSaved = _stack[_index];
+        editor.innerHTML = _lastSaved;
+        _restoreCursorToEnd();
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      }
+
+      function _restoreCursorToEnd() {
+        const range = document.createRange();
+        range.selectNodeContents(editor);
+        range.collapse(false);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+
+      // MutationObserver 防抖保存
+      const observer = new MutationObserver(() => {
+        clearTimeout(_debounce);
+        _debounce = setTimeout(save, 300);
+      });
+      observer.observe(editor, {
+        childList: true, subtree: true, characterData: true,
+        attributes: false, attributeOldValue: false
+      });
+
+      // 初始快照
+      save();
+
+      return { undo, redo, save, _stack, getIndex: () => _index };
+    })();
+
     // 彩蛋 B：关键词触发复古主题（输入"幻影"或"phantom"后回车）
     editor.addEventListener('keydown', e => {
+      // Ctrl+A — 仅选中编辑器内容，不透传到页面
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault();
+        e.stopPropagation();
+        const range = document.createRange();
+        range.selectNodeContents(editor);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return;
+      }
       // Ctrl+Z 撤销 / Ctrl+Y 重做
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
+        if (undoStack.undo()) { return; }
         document.execCommand('undo', false, null);
         return;
       }
       if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
         e.preventDefault();
+        if (undoStack.redo()) { return; }
         document.execCommand('redo', false, null);
         return;
       }
@@ -296,18 +475,29 @@ const App = (() => {
     // ── 全局分支数据 ──
     window._branchData = window._branchData || [];
 
-    // ── 获取光标所在段落索引 ──
+    // ── 获取光标所在段落索引（增强版：兼容多种DOM结构）──
     function getCurrentParagraphIndex() {
-      const sel = window.getSelection();
-      if (!sel.rangeCount) return -1;
-      const range = sel.getRangeAt(0);
+      // 优先使用 _lastEditorRange
+      let range = _lastEditorRange;
+      if (!range) {
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount) return -1;
+        range = sel.getRangeAt(0);
+      }
+
+      // 获取编辑器中所有可视为"段落"的块级元素
+      const blocks = Array.from(editor.querySelectorAll('div, p, .scene-marker'));
+      if (blocks.length === 0) return 0; // 编辑器内第一个位置
+
+      // 判断光标所在节点属于哪个块
       let node = range.startContainer;
       while (node && node !== editor) {
-        if (node.nodeType === 1 && (node.tagName === 'DIV' || node.tagName === 'P' || node.classList.contains('scene-marker'))) {
-          return Array.from(editor.querySelectorAll('div, p, .scene-marker')).indexOf(node);
-        }
+        const idx = blocks.indexOf(node);
+        if (idx >= 0) return idx;
         node = node.parentNode;
       }
+
+      // 回退：无法定位时返回 -1，调用侧已做 srcIdx < 0 检查
       return -1;
     }
 
@@ -366,15 +556,33 @@ const App = (() => {
     }
 
     // ── 1) 场景标记按钮 ──
-    document.getElementById('fmtScene')?.addEventListener('mousedown', e => {
-      e.preventDefault(); e.stopPropagation();
-
-      const sel = window.getSelection();
-      if (!sel.rangeCount) return;
+    document.getElementById('fmtScene')?.addEventListener('click', () => {
       editor.focus();
 
+      // 恢复上次编辑器选区
+      let sel = window.getSelection();
+      let useSaved = false;
+      if ((!sel || !sel.rangeCount || sel.isCollapsed || !editor.contains(sel.getRangeAt(0).commonAncestorContainer)) && _lastEditorRange) {
+        useSaved = true;
+      }
+
+      if (useSaved) {
+        sel.removeAllRanges();
+        sel.addRange(_lastEditorRange);
+      } else if (!sel || !sel.rangeCount) {
+        // 无选区，插入空场景标记
+        const marker = makeSceneMarkerDiv();
+        editor.appendChild(marker);
+        marker.focus();
+        updateTextStats();
+        showToast('场景标记已插入，输入场景名称', 'success');
+        return;
+      }
+
+      const range = useSaved ? _lastEditorRange : sel.getRangeAt(0);
+
       // 检查是否在已有场景标记上
-      let node = sel.getRangeAt(0).startContainer;
+      let node = range.startContainer;
       while (node && node !== editor) {
         if (node.classList && node.classList.contains('scene-marker')) {
           node.focus();
@@ -384,30 +592,51 @@ const App = (() => {
         node = node.parentNode;
       }
 
-      // 插入新场景标记
-      const marker = document.createElement('div');
-      marker.className = 'scene-marker';
-      marker.setAttribute('data-scene', 'true');
-
-      const range = sel.getRangeAt(0);
-      // 找到光标所在块级元素的末尾插入
-      let block = range.startContainer;
-      while (block && block !== editor && block.nodeType !== 1) block = block.parentNode;
-      if (block && block !== editor && (block.tagName === 'DIV' || block.tagName === 'P')) {
-        block.parentNode.insertBefore(marker, block.nextSibling);
+      // 如果有选中文字 → 将选区包裹为场景标记
+      if (!range.collapsed) {
+        const frag = range.extractContents();
+        const marker = makeSceneMarkerDiv();
+        marker.appendChild(frag);
+        range.insertNode(marker);
+        // 在标记后插入换行
+        const br = document.createElement('div');
+        br.innerHTML = '<br>';
+        marker.after(br);
+        marker.focus();
       } else {
-        editor.appendChild(marker);
+        // 光标处：在当前块前面插入场景标记
+        let block = range.startContainer;
+        while (block && block !== editor && block.nodeType !== 1) block = block.parentNode;
+        const marker = makeSceneMarkerDiv();
+        if (block && block !== editor && (block.tagName === 'DIV' || block.tagName === 'P' || block.classList?.contains('scene-marker'))) {
+          block.before(marker);
+        } else {
+          editor.appendChild(marker);
+        }
+        marker.focus();
       }
 
-      marker.focus();
       updateTextStats();
       showToast('场景标记已插入，输入场景名称', 'success');
     });
 
+    function makeSceneMarkerDiv() {
+      const d = document.createElement('div');
+      d.className = 'scene-marker';
+      d.innerHTML = '◆ ';
+      d.setAttribute('data-scene', 'true');
+      d.contentEditable = 'true';
+      return d;
+    }
+
     // ── 2) 配图插入按钮 ──
     const imgPopup = document.getElementById('imgInsertPopup');
-    document.getElementById('fmtImage')?.addEventListener('mousedown', e => {
-      e.preventDefault(); e.stopPropagation();
+    document.getElementById('fmtImage')?.addEventListener('click', () => {
+      // 保存当前编辑器选区，供后续 insertImageAtCursor 使用
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+        _lastEditorRange = sel.getRangeAt(0).cloneRange();
+      }
       if (imgPopup) {
         const visible = imgPopup.style.display !== 'none';
         imgPopup.style.display = visible ? 'none' : 'block';
@@ -471,9 +700,45 @@ const App = (() => {
 
     function insertImageAtCursor(src) {
       editor.focus();
-      const sel = window.getSelection();
-      if (!sel.rangeCount) return;
+      let sel = window.getSelection();
 
+      // 如果当前选区丢失，回退到保存的选区
+      if ((!sel || !sel.rangeCount || sel.isCollapsed || !editor.contains(sel.getRangeAt(0).commonAncestorContainer)) && _lastEditorRange) {
+        sel.removeAllRanges();
+        sel.addRange(_lastEditorRange);
+      }
+
+      if (!sel || !sel.rangeCount) {
+        // 仍有问题 — 直接追加到编辑器末尾
+        const wrap = makeImageWrap(src);
+        editor.appendChild(wrap);
+        const spacer = document.createElement('div');
+        spacer.innerHTML = '<br>';
+        editor.appendChild(spacer);
+        updateTextStats();
+        showToast('图片已追加到末尾', '');
+        return;
+      }
+
+      const wrap = makeImageWrap(src);
+
+      const range = sel.getRangeAt(0);
+      let block = range.startContainer;
+      while (block && block !== editor && block.nodeType !== 1) block = block.parentNode;
+      if (block && block !== editor && (block.tagName === 'DIV' || block.tagName === 'P' || block.classList?.contains('scene-marker'))) {
+        block.after(wrap);
+      } else {
+        editor.appendChild(wrap);
+      }
+      // 在图片后插入一个空行继续写作
+      const spacer = document.createElement('div');
+      spacer.innerHTML = '<br>';
+      wrap.after(spacer);
+      updateTextStats();
+      showToast('图片已插入', 'success');
+    }
+
+    function makeImageWrap(src) {
       const wrap = document.createElement('div');
       wrap.className = 'editor-image-wrap';
       wrap.contentEditable = 'false';
@@ -487,27 +752,12 @@ const App = (() => {
       removeBtn.onclick = () => { wrap.remove(); updateTextStats(); };
       wrap.appendChild(img);
       wrap.appendChild(removeBtn);
-
-      const range = sel.getRangeAt(0);
-      let block = range.startContainer;
-      while (block && block !== editor && block.nodeType !== 1) block = block.parentNode;
-      if (block && block !== editor && (block.tagName === 'DIV' || block.tagName === 'P')) {
-        block.parentNode.insertBefore(wrap, block.nextSibling);
-      } else {
-        editor.appendChild(wrap);
-      }
-      // 在图片后插入一个空行继续写作
-      const spacer = document.createElement('div');
-      spacer.innerHTML = '<br>';
-      wrap.parentNode.insertBefore(spacer, wrap.nextSibling);
-      updateTextStats();
-      showToast('图片已插入', 'success');
+      return wrap;
     }
 
     // ── 3) 分支剧情面板 ──
     const branchPanel = document.getElementById('branchPanel');
-    document.getElementById('fmtBranch')?.addEventListener('mousedown', e => {
-      e.preventDefault(); e.stopPropagation();
+    document.getElementById('fmtBranch')?.addEventListener('click', () => {
       if (branchPanel) {
         const visible = branchPanel.style.display !== 'none';
         branchPanel.style.display = visible ? 'none' : 'block';
@@ -723,17 +973,31 @@ const App = (() => {
           e.preventDefault(); e.stopPropagation();
           const agent = btn.dataset.agent;
           const editor = document.getElementById('textEditor');
-          // 恢复选区（让用户在智能体聊天时能看到上下文）
-          if (_selectedRange && editor) {
-            const sel = window.getSelection();
+
+          // 优先使用当前实时选区，回退到缓存的 _selectedRange
+          let range = null;
+          const sel = window.getSelection();
+          if (sel && sel.rangeCount && !sel.isCollapsed && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+            range = sel.getRangeAt(0);
+          } else if (_selectedRange) {
+            // 验证缓存选区节点仍在 DOM 中
             try {
-              sel.removeAllRanges();
-              sel.addRange(_selectedRange);
+              if (editor.contains(_selectedRange.commonAncestorContainer)) {
+                range = _selectedRange;
+              }
             } catch (_) {}
           }
+
+          if (range && editor) {
+            try {
+              sel.removeAllRanges();
+              sel.addRange(range);
+            } catch (_) {}
+          }
+
           Agents.setContext(agent, _selectedText);
           switchAgentTab(agent);
-          showToast(`已引用到 ${agent === 'ziwen' ? '字吻' : '花花'}`, 'success');
+          window.App?.showToast(`已引用到 ${agent === 'ziwen' ? '字吻' : '花花'}`, 'success');
           setTimeout(hideSelectionPopup, 400);
         });
       });
@@ -1059,6 +1323,7 @@ const App = (() => {
         document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active'));
         card.classList.add('active');
         currentTemplate = card.dataset.tpl;
+        // 不清除 _customCanvasBg — 用户画布优先于模板
         _savedCanvasBg = null;
         _savedCanvasBgImage = null;
         applyTemplateBg(currentTemplate);
@@ -1075,11 +1340,19 @@ const App = (() => {
       bgImage: null,
       ratio: '16:9',
       texture: null,
-      texOpacity: 40
+      texOpacity: 40,
+      pattern: null,        // 纹理样式：null|'sakura'|'ginkgo'|'goldDust'|'snow'|'bamboo'|'beast'
+      _materialPattern: null  // 材质专属图案 CSS url()
     };
     // 联动：保存/恢复排版预览背景
     let _savedCanvasBg = null;
     let _savedCanvasBgImage = null;
+    let _customCanvasBg = null;         // 用户自定义画布背景 image
+    let _customCanvasBgImage = null;    // 同上（兼容旧引用）
+    let _customCanvasBgSize = null;
+    let _customCanvasBgRepeat = null;
+    let _customCanvasBgPos = null;
+    let _customCanvasBgColor = null;
     let _prevLayoutBg = null;
     let _prevLayoutBgImage = null;
 
@@ -1112,7 +1385,13 @@ const App = (() => {
       if (restore && _prevLayoutBg !== null) {
         layoutPreview.style.background = _prevLayoutBg;
         layoutPreview.style.backgroundImage = _prevLayoutBgImage || '';
+        if (_prevLayoutBgImage) {
+          layoutPreview.style.backgroundSize = 'cover';
+          layoutPreview.style.backgroundPosition = 'center';
+        }
       }
+      // 清除材质图案临时状态
+      canvasState._materialPattern = null;
     }
 
     document.getElementById('canvasModalClose')?.addEventListener('click', () => closeCanvasModal(true));
@@ -1232,97 +1511,226 @@ const App = (() => {
       updateBigPreview();
     });
 
-    // 材质选择 → 一键套用（清除自定义设置）
+    // 花纹样式选择（画布 Tab 内）
+    document.querySelectorAll('#canvasModal .ce-pattern-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const patKey = card.dataset.pattern || null;  // '' → null (无花纹)
+        if (canvasState.pattern === patKey) {
+          // 二次点击同花纹 → 切换为无花纹
+          canvasState.pattern = null;
+          document.querySelectorAll('#canvasModal .ce-pattern-card').forEach(c => c.classList.remove('active'));
+          const noneCard = document.querySelector('#canvasModal .ce-pattern-card[data-pattern=""]');
+          if (noneCard) noneCard.classList.add('active');
+        } else {
+          document.querySelectorAll('#canvasModal .ce-pattern-card').forEach(c => c.classList.remove('active'));
+          card.classList.add('active');
+          canvasState.pattern = patKey;
+        }
+        updateBigPreview();
+      });
+    });
+
+    // ── 材质预设：每种材质有独立底色 + 专属 SVG 图案（不依赖纹理 Tab）──
+    const MATERIAL_PATTERNS = {
+      // 透明水滴 — 浅蓝底色 + 水滴光斑 SVG
+      water: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cdefs%3E%3CradialGradient id='wd' cx='40%25' cy='40%25'%3E%3Cstop offset='0%25' stop-color='white' stop-opacity='0.25'/%3E%3Cstop offset='100%25' stop-color='white' stop-opacity='0'/%3E%3C/radialGradient%3E%3C/defs%3E%3Cellipse cx='30' cy='25' rx='18' ry='14' fill='url(%23wd)'/%3E%3Cellipse cx='80' cy='60' rx='22' ry='16' fill='url(%23wd)'/%3E%3Cellipse cx='45' cy='85' rx='15' ry='12' fill='url(%23wd)'/%3E%3Cellipse cx='100' cy='15' rx='12' ry='9' fill='url(%23wd)'/%3E%3C/svg%3E`,
+      // 清新拟态 — 柔粉底色 + 微妙光影圆点  
+      neumorph: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cdefs%3E%3CradialGradient id='nm' cx='50%25' cy='50%25'%3E%3Cstop offset='0%25' stop-color='white' stop-opacity='0.12'/%3E%3Cstop offset='100%25' stop-color='white' stop-opacity='0'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='20' cy='20' r='14' fill='url(%23nm)'/%3E%3Ccircle cx='75' cy='35' r='18' fill='url(%23nm)'/%3E%3Ccircle cx='45' cy='70' r='16' fill='url(%23nm)'/%3E%3Ccircle cx='90' cy='80' r='12' fill='url(%23nm)'/%3E%3C/svg%3E`,
+      // 碎裂玻璃 — 深蓝底色 + 裂纹线条
+      glass: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cpath d='M20 0 L45 50 L30 90 L70 110 L55 150' stroke='rgba(255,255,255,0.06)' stroke-width='0.8' fill='none'/%3E%3Cpath d='M60 0 L75 40 L110 35 L95 80 L140 95' stroke='rgba(255,255,255,0.05)' stroke-width='0.6' fill='none'/%3E%3Cpath d='M100 0 L115 55 L85 70 L130 130' stroke='rgba(255,255,255,0.04)' stroke-width='0.7' fill='none'/%3E%3Cpath d='M0 60 L40 70 L25 110 L55 130' stroke='rgba(255,255,255,0.05)' stroke-width='0.5' fill='none'/%3E%3Cpath d='M130 10 L140 50 L120 80 L145 100' stroke='rgba(255,255,255,0.04)' stroke-width='0.6' fill='none'/%3E%3C/svg%3E`,
+      // 温柔毛毡 — 暖棕底色 + 纤维短纹
+      felt: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cline x1='5' y1='8' x2='20' y2='10' stroke='rgba(139,105,60,0.06)' stroke-width='1.5'/%3E%3Cline x1='35' y1='15' x2='50' y2='12' stroke='rgba(139,105,60,0.05)' stroke-width='1.2'/%3E%3Cline x1='10' y1='30' x2='25' y2='28' stroke='rgba(139,105,60,0.06)' stroke-width='1.8'/%3E%3Cline x1='40' y1='35' x2='55' y2='38' stroke='rgba(139,105,60,0.05)' stroke-width='1.3'/%3E%3Cline x1='3' y1='50' x2='18' y2='52' stroke='rgba(139,105,60,0.06)' stroke-width='1.5'/%3E%3Cline x1='30' y1='48' x2='48' y2='45' stroke='rgba(139,105,60,0.05)' stroke-width='1.2'/%3E%3Cline x1='15' y1='55' x2='22' y2='58' stroke='rgba(139,105,60,0.04)' stroke-width='1'/%3E%3C/svg%3E`,
+      // 柔顺布料 — 淡紫底色 + 经纬编织纹
+      fabricW: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect x='0' y='8' width='40' height='2' rx='1' fill='rgba(130,110,150,0.05)'/%3E%3Crect x='0' y='20' width='40' height='2.5' rx='1' fill='rgba(130,110,150,0.04)'/%3E%3Crect x='0' y='32' width='40' height='2' rx='1' fill='rgba(130,110,150,0.05)'/%3E%3Crect x='10' y='0' width='2' height='40' rx='1' fill='rgba(130,110,150,0.03)'/%3E%3Crect x='28' y='0' width='2' height='40' rx='1' fill='rgba(130,110,150,0.03)'/%3E%3C/svg%3E`,
+      // 宣纸 — 米白底色 + 细纤维斑点
+      ricepaper: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cline x1='15' y1='5' x2='25' y2='6' stroke='rgba(139,105,20,0.04)' stroke-width='1'/%3E%3Cline x1='50' y1='18' x2='62' y2='16' stroke='rgba(139,105,20,0.03)' stroke-width='0.8'/%3E%3Cline x1='8' y1='35' x2='18' y2='37' stroke='rgba(139,105,20,0.04)' stroke-width='1.2'/%3E%3Cline x1='38' y1='42' x2='55' y2='40' stroke='rgba(139,105,20,0.03)' stroke-width='0.7'/%3E%3Cline x1='60' y1='55' x2='72' y2='57' stroke='rgba(139,105,20,0.04)' stroke-width='1'/%3E%3Cline x1='20' y1='62' x2='35' y2='60' stroke='rgba(139,105,20,0.03)' stroke-width='0.9'/%3E%3Cline x1='45' y1='72' x2='55' y2='74' stroke='rgba(139,105,20,0.04)' stroke-width='1.1'/%3E%3Ccircle cx='70' cy='22' r='1.5' fill='rgba(139,105,20,0.05)'/%3E%3Ccircle cx='30' cy='50' r='1' fill='rgba(139,105,20,0.04)'/%3E%3Ccircle cx='12' cy='68' r='1.2' fill='rgba(139,105,20,0.04)'/%3E%3C/svg%3E`,
+      // 糖纸 — 彩虹渐变底色 + 细碎折光纹
+      candy: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cdefs%3E%3ClinearGradient id='cg1' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='white' stop-opacity='0.2'/%3E%3Cstop offset='50%25' stop-color='white' stop-opacity='0.05'/%3E%3Cstop offset='100%25' stop-color='white' stop-opacity='0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpolygon points='0,15 40,10 80,20 100,5 100,35 60,40 20,30 0,45' fill='url(%23cg1)'/%3E%3Cpolygon points='0,50 50,45 90,55 100,48 100,72 70,68 30,75 0,70' fill='rgba(255,255,255,0.04)'/%3E%3Ccircle cx='25' cy='25' r='2' fill='white' opacity='0.08'/%3E%3Ccircle cx='75' cy='65' r='1.5' fill='white' opacity='0.07'/%3E%3Ccircle cx='55' cy='85' r='1.8' fill='white' opacity='0.06'/%3E%3C/svg%3E`
+    };
+
+    // 材质预设定义（含底色、材质专属图案、是否暗色）
+    const MATERIAL_PRESETS = {
+      water:     { mode:'color', bgColor:'#e8f4fd', pattern:'water',     isDark:false },
+      neumorph:  { mode:'color', bgColor:'#f5f0f5', pattern:'neumorph',  isDark:false },
+      glass:     { mode:'color', bgColor:'#1a2a3a', pattern:'glass',     isDark:true },
+      felt:      { mode:'color', bgColor:'#f0e6d8', pattern:'felt',      isDark:false },
+      fabricW:   { mode:'color', bgColor:'#f5f0f8', pattern:'fabricW',   isDark:false },
+      ricepaper: { mode:'color', bgColor:'#faf6ed', pattern:'ricepaper', isDark:false },
+      candy:     { mode:'color', bgColor:'#fef5f8', pattern:'candy',     isDark:false }
+    };
+
+    // 材质选择 → 更新 canvasState 并在弹窗内预览（不关闭弹窗）
     document.querySelectorAll('#canvasModal .ce-mat-card').forEach(card => {
       card.addEventListener('click', () => {
         document.querySelectorAll('#canvasModal .ce-mat-card').forEach(m => m.classList.remove('active'));
         card.classList.add('active');
-        canvasState.mode = 'color';
+        const matKey = card.dataset.mat;
+        const preset = MATERIAL_PRESETS[matKey];
+        if (!preset) return;
+
+        // 将材质预设写入 canvasState
+        canvasState.mode = preset.mode;
+        canvasState.bgColor = preset.bgColor;
         canvasState.bgImage = null;
-        canvasState.texture = null;
+        canvasState.texture = null;     // 材质自带图案，不使用纹理Tab
+        canvasState.texOpacity = 40;
+        canvasState._materialPattern = MATERIAL_PATTERNS[preset.pattern]
+          ? `url("${MATERIAL_PATTERNS[preset.pattern]}")`
+          : null;
+
+        // 清除颜色选择器的高亮
         document.querySelectorAll('#canvasModal .ce-color-dot').forEach(d => d.classList.remove('active'));
+        // 清除纹理Tab选中状态
         document.querySelectorAll('#canvasModal .ce-tex-card').forEach(t => t.classList.remove('active'));
+        // 同步纹理强度滑块
+        const texSlider = document.getElementById('ceTexOpacity');
+        if (texSlider) texSlider.value = 40;
+        const texVal = document.getElementById('ceTexOpacityVal');
+        if (texVal) texVal.textContent = '40%';
+
         updateModeHint();
-        // 直接应用材质到排版预览（弹窗内预览用材质背景）
-        const matBg = card.querySelector('.ce-mat-preview').style.background;
-        const isDark = card.dataset.mat === 'night' || card.dataset.mat === 'gold';
-        layoutPreview.style.background = matBg;
-        layoutPreview.style.backgroundImage = '';
-        layoutPreview.style.color = isDark ? '#e0d8d0' : '';
-        layoutPreview.style.textShadow = isDark ? '0 1px 2px rgba(0,0,0,.3)' : '';
-        closeCanvasModal();
-        showToast('材质「' + card.querySelector('span').textContent + '」已应用', 'success');
+        updateBigPreview();
+        showToast('材质「' + card.querySelector('span').textContent + '」已载入预览，请点击"应用画布"确认', 'info');
       });
     });
 
     // 应用画布按钮
     document.getElementById('ceApplyCanvas')?.addEventListener('click', () => {
-      if (canvasState.mode === 'image' && canvasState.bgImage) {
-        layoutPreview.style.background = `url(${canvasState.bgImage}) center/cover`;
-        layoutPreview.style.backgroundImage = `url(${canvasState.bgImage})`;
-        layoutPreview.style.backgroundSize = 'cover';
-        layoutPreview.style.backgroundPosition = 'center';
-      } else if (canvasState.mode === 'color' && canvasState.bgColor) {
-        const lighter = lightenColor(canvasState.bgColor, 15);
-        let bg = `linear-gradient(${canvasState.gradientDir}, ${canvasState.bgColor}, ${lighter})`;
-        if (canvasState.texture) {
-          const texBgs = {
-            noise: `repeating-conic-gradient(rgba(0,0,0,${canvasState.texOpacity/250}) 0% 25%, transparent 0% 50%) 50%/4px 4px`,
-            paper: `linear-gradient(90deg,rgba(139,105,20,${canvasState.texOpacity/250}) 1px,transparent 1px) 0/4px 100%`,
-            fabric: `repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,${canvasState.texOpacity/250}) 2px,rgba(0,0,0,${canvasState.texOpacity/250}) 4px)`,
-            dots: `radial-gradient(circle,rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px) 0 0/8px 8px`,
-            lines: `repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,${canvasState.texOpacity/250}) 3px,rgba(0,0,0,${canvasState.texOpacity/250}) 4px)`,
-            grid: `linear-gradient(rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px) 0/12px 12px,linear-gradient(90deg,rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px) 0/12px 12px`
-          };
-          const texBg = texBgs[canvasState.texture] || '';
-          if (texBg) bg = texBg + ',' + bg;
-        }
-        layoutPreview.style.background = bg;
-        layoutPreview.style.backgroundImage = '';
-      }
-      // 标记为自定义，持久化背景
+      // 先让 updateBigPreview 同步排版预览
+      updateBigPreview();
+
+      // 标记为自定义
       document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active'));
       document.getElementById('tplCustomCard').classList.add('active');
       currentTemplate = 'custom';
-      _savedCanvasBg = layoutPreview.style.background;
-      _savedCanvasBgImage = layoutPreview.style.backgroundImage;
+      _savedCanvasBg = null; _savedCanvasBgImage = null;
+      // 保存完整的独立背景属性
+      _customCanvasBg = layoutPreview.style.backgroundImage || '';
+      _customCanvasBgImage = layoutPreview.style.backgroundImage || '';
+      _customCanvasBgSize = layoutPreview.style.backgroundSize || '';
+      _customCanvasBgRepeat = layoutPreview.style.backgroundRepeat || '';
+      _customCanvasBgPos = layoutPreview.style.backgroundPosition || '';
+      _customCanvasBgColor = layoutPreview.style.backgroundColor || '';
       closeCanvasModal(false);
       showToast('画布已应用', 'success');
     });
+
+    // ── 纹理样式（原花纹）SVG 底纹 ──
+    function generatePatternCSS(pattern) {
+      if (!pattern) return { bgImage: '', bgRepeat: 'repeat' };
+      const PATTERNS = {
+        sakura: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E  %3Cellipse cx='80' cy='76' rx='9' ry='15' fill='%23e8a0b4' opacity='0.22'/%3E  %3Cellipse cx='94' cy='86' rx='9' ry='15' transform='rotate(72 80 86)' fill='%23e8a0b4' opacity='0.22'/%3E  %3Cellipse cx='88' cy='102' rx='9' ry='15' transform='rotate(144 80 86)' fill='%23e8a0b4' opacity='0.22'/%3E  %3Cellipse cx='72' cy='102' rx='9' ry='15' transform='rotate(216 80 86)' fill='%23e8a0b4' opacity='0.22'/%3E  %3Cellipse cx='66' cy='86' rx='9' ry='15' transform='rotate(288 80 86)' fill='%23e8a0b4' opacity='0.22'/%3E  %3Ccircle cx='80' cy='86' r='5' fill='%23e8a0b4' opacity='0.32'/%3E  %3Cellipse cx='200' cy='185' rx='6' ry='11' fill='%23e8a0b4' opacity='0.14'/%3E  %3Cellipse cx='210' cy='192' rx='6' ry='11' transform='rotate(72 200 192)' fill='%23e8a0b4' opacity='0.14'/%3E  %3Cellipse cx='206' cy='203' rx='6' ry='11' transform='rotate(144 200 192)' fill='%23e8a0b4' opacity='0.14'/%3E  %3Cellipse cx='194' cy='203' rx='6' ry='11' transform='rotate(216 200 192)' fill='%23e8a0b4' opacity='0.14'/%3E  %3Cellipse cx='190' cy='192' rx='6' ry='11' transform='rotate(288 200 192)' fill='%23e8a0b4' opacity='0.14'/%3E  %3Ccircle cx='200' cy='192' r='3.5' fill='%23e8a0b4' opacity='0.22'/%3E  %3Cellipse cx='50' cy='200' rx='4' ry='8' fill='%23e8a0b4' opacity='0.08'/%3E  %3Cellipse cx='58' cy='204' rx='4' ry='8' transform='rotate(72 50 204)' fill='%23e8a0b4' opacity='0.08'/%3E  %3Cellipse cx='55' cy='212' rx='4' ry='8' transform='rotate(144 50 204)' fill='%23e8a0b4' opacity='0.08'/%3E  %3Cellipse cx='47' cy='212' rx='4' ry='8' transform='rotate(216 50 204)' fill='%23e8a0b4' opacity='0.08'/%3E  %3Cellipse cx='45' cy='204' rx='4' ry='8' transform='rotate(288 50 204)' fill='%23e8a0b4' opacity='0.08'/%3E  %3Ccircle cx='50' cy='204' r='2.5' fill='%23e8a0b4' opacity='0.12'/%3E%3C/svg%3E`,
+        ginkgo: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cpath d='M45 20 Q50 10 55 20 L65 35 Q70 45 55 50 Q40 55 25 50 Q10 45 25 35 Z' fill='%23c8a050' opacity='0.12'/%3E%3Cpath d='M45 75 Q50 65 55 75 L60 85 Q60 90 50 90 Q40 90 40 85 Z' fill='%23c8a050' opacity='0.08'/%3E%3Ccircle cx='20' cy='55' r='1.5' fill='%23c8a050' opacity='0.1'/%3E%3C/svg%3E`,
+        goldDust: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E  %3Cpolygon points='110,70 117,106 153,113 117,120 110,156 103,120 67,113 103,106' fill='%23d4a030' opacity='0.3'/%3E  %3Cpolygon points='190,35 194,56 215,61 194,66 190,87 186,66 165,61 186,56' fill='%23d4a030' opacity='0.2'/%3E  %3Cpolygon points='38,165 41,180 55,184 41,188 38,203 35,188 21,184 35,180' fill='%23d4a030' opacity='0.18'/%3E  %3Cpolygon points='195,140 197,152 208,155 197,158 195,170 193,158 182,155 193,152' fill='%23d4a030' opacity='0.13'/%3E%3C/svg%3E`,
+        snow: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E  %3Cg stroke='white' stroke-opacity='0.2' stroke-width='1.2' stroke-linecap='round' fill='none'%3E    %3Cline x1='80' y1='88' x2='80' y2='122'/%3E    %3Cline x1='63' y1='96' x2='97' y2='114'/%3E    %3Cline x1='63' y1='114' x2='97' y2='96'/%3E    %3Cline x1='80' y1='80' x2='80' y2='72'/%3E    %3Cline x1='72' y1='88' x2='67' y2='83'/%3E    %3Cline x1='88' y1='88' x2='93' y2='83'/%3E    %3Cline x1='66' y1='98' x2='60' y2='96'/%3E    %3Cline x1='94' y1='112' x2='100' y2='114'/%3E    %3Cline x1='94' y1='98' x2='100' y2='96'/%3E    %3Cline x1='66' y1='112' x2='60' y2='114'/%3E  %3C/g%3E  %3Cg stroke='white' stroke-opacity='0.13' stroke-width='0.9' stroke-linecap='round' fill='none'%3E    %3Cline x1='160' y1='148' x2='160' y2='168'/%3E    %3Cline x1='150' y1='153' x2='170' y2='163'/%3E    %3Cline x1='150' y1='163' x2='170' y2='153'/%3E    %3Cline x1='160' y1='143' x2='160' y2='138'/%3E  %3C/g%3E  %3Cg stroke='white' stroke-opacity='0.09' stroke-width='0.7' stroke-linecap='round' fill='none'%3E    %3Cline x1='40' y1='30' x2='40' y2='42'/%3E    %3Cline x1='34' y1='33' x2='46' y2='39'/%3E    %3Cline x1='34' y1='39' x2='46' y2='33'/%3E  %3C/g%3E%3C/svg%3E`,
+        bamboo: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='70' height='70'%3E%3Cellipse cx='35' cy='15' rx='8' ry='3' fill='%234a7c3f' opacity='0.1'/%3E%3Cellipse cx='20' cy='40' rx='6' ry='2.5' fill='%234a7c3f' opacity='0.08'/%3E%3Cellipse cx='55' cy='55' rx='7' ry='2' fill='%234a7c3f' opacity='0.09'/%3E%3C/svg%3E`,
+        beast: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cpath d='M30 20 L35 10 L40 20 L50 15 L45 25 L55 30 L45 35 L40 25 L35 35 L25 30 Z' fill='%238B6914' opacity='0.15'/%3E%3Cpath d='M70 60 L75 50 L80 60 L90 55 L85 65 L95 70 L85 75 L80 65 L75 75 L65 70 Z' fill='%238B6914' opacity='0.12'/%3E%3Ccircle cx='15' cy='55' r='2' fill='%238B6914' opacity='0.2'/%3E%3Ccircle cx='85' cy='25' r='2' fill='%238B6914' opacity='0.18'/%3E%3Ccircle cx='50' cy='65' r='1.5' fill='%238B6914' opacity='0.15'/%3E%3C/svg%3E`
+      };
+      const dataUri = PATTERNS[pattern];
+      if (!dataUri) return { bgImage: '', bgRepeat: 'repeat' };
+      return { bgImage: `url("${dataUri}")`, bgRepeat: 'repeat' };
+    }
+
+    // 将纹理样式叠加到已有背景上，返回完整的 background-image 值
+    function applyPatternToBg(baseBgImage, pattern) {
+      if (!pattern) return baseBgImage;
+      const pat = generatePatternCSS(pattern);
+      if (!pat.bgImage) return baseBgImage;
+      if (!baseBgImage || baseBgImage === 'none') return pat.bgImage;
+      return `${pat.bgImage}, ${baseBgImage}`;
+    }
 
     function updateBigPreview() {
       const preview = document.getElementById('cePreviewBig');
       if (!preview) return;
       preview.style.aspectRatio = String(RATIO_MAP[canvasState.ratio] || 16/9);
-      preview.querySelector('.ce-preview-placeholder').style.display = 'none';
+      const placeholder = preview.querySelector('.ce-preview-placeholder');
+      if (placeholder) placeholder.style.display = 'none';
 
+      // 重置所有背景属性
+      const bgProps = ['background','backgroundImage','backgroundColor','backgroundSize','backgroundPosition','backgroundRepeat'];
+      const resetBg = (el) => bgProps.forEach(p => el.style[p] = '');
+
+      resetBg(preview);
+      resetBg(layoutPreview);
+
+      // 构建 background-image 图层（从顶到底：纹理样式 > 材质图案 > 纹理覆盖 > 主背景）
+      let bgImages = [];
+      let bgSizes = [];
+      let bgRepeats = [];
+      let bgPositions = [];
+
+      // 第1层：纹理样式（花纹/装饰图案）
+      if (canvasState.pattern) {
+        const pat = generatePatternCSS(canvasState.pattern);
+        if (pat.bgImage) {
+          bgImages.push(pat.bgImage);
+          bgSizes.push('auto');
+          bgRepeats.push(pat.bgRepeat);
+          bgPositions.push('0 0');
+        }
+      }
+
+      // 第2层：材质专属图案（如果有）
+      if (canvasState._materialPattern) {
+        bgImages.push(canvasState._materialPattern);
+        bgSizes.push('auto');
+        bgRepeats.push('repeat');
+        bgPositions.push('0 0');
+      }
+
+      // 第3层：纹理叠加（noise/paper/fabric等）
+      if (canvasState.texture) {
+        const texBgs = {
+          noise: `repeating-conic-gradient(rgba(0,0,0,${canvasState.texOpacity/250}) 0% 25%, transparent 0% 50%)`,
+          paper: `linear-gradient(90deg,rgba(139,105,20,${canvasState.texOpacity/250}) 1px,transparent 1px)`,
+          fabric: `repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,${canvasState.texOpacity/250}) 2px,rgba(0,0,0,${canvasState.texOpacity/250}) 4px)`,
+          dots: `radial-gradient(circle,rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px)`,
+          lines: `repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,${canvasState.texOpacity/250}) 3px,rgba(0,0,0,${canvasState.texOpacity/250}) 4px)`,
+          grid: `linear-gradient(rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px),linear-gradient(90deg,rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px)`
+        };
+        const texBg = texBgs[canvasState.texture];
+        if (texBg) {
+          bgImages.push(texBg);
+          bgSizes.push(canvasState.texture === 'noise' ? '4px 4px' : canvasState.texture === 'dots' ? '8px 8px' : canvasState.texture === 'grid' ? '12px 12px' : canvasState.texture === 'paper' ? '4px 100%' : 'auto');
+          bgRepeats.push('repeat');
+          bgPositions.push('50% 0');
+        }
+      }
+
+      // 第4层：主背景（渐变或图片）
       if (canvasState.mode === 'image' && canvasState.bgImage) {
-        preview.style.background = `url(${canvasState.bgImage}) center/cover`;
-        // 实时联动排版预览
-        layoutPreview.style.background = `url(${canvasState.bgImage}) center/cover`;
-        layoutPreview.style.backgroundImage = `url(${canvasState.bgImage})`;
-        layoutPreview.style.backgroundSize = 'cover';
-        layoutPreview.style.backgroundPosition = 'center';
+        bgImages.push(`url(${canvasState.bgImage})`);
+        bgSizes.push('cover');
+        bgRepeats.push('no-repeat');
+        bgPositions.push('center');
       } else if (canvasState.mode === 'color' && canvasState.bgColor) {
         const lighter = lightenColor(canvasState.bgColor, 15);
-        let bg = `linear-gradient(${canvasState.gradientDir}, ${canvasState.bgColor}, ${lighter})`;
-        // 叠加纹理
-        if (canvasState.texture) {
-          const texBgs = {
-            noise: `repeating-conic-gradient(rgba(0,0,0,${canvasState.texOpacity/250}) 0% 25%, transparent 0% 50%) 50%/4px 4px`,
-            paper: `linear-gradient(90deg,rgba(139,105,20,${canvasState.texOpacity/250}) 1px,transparent 1px) 0/4px 100%`,
-            fabric: `repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,${canvasState.texOpacity/250}) 2px,rgba(0,0,0,${canvasState.texOpacity/250}) 4px)`,
-            dots: `radial-gradient(circle,rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px) 0 0/8px 8px`,
-            lines: `repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,${canvasState.texOpacity/250}) 3px,rgba(0,0,0,${canvasState.texOpacity/250}) 4px)`,
-            grid: `linear-gradient(rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px) 0/12px 12px,linear-gradient(90deg,rgba(0,0,0,${canvasState.texOpacity/250}) 1px,transparent 1px) 0/12px 12px`
-          };
-          const texBg = texBgs[canvasState.texture] || '';
-          if (texBg) bg = texBg + ',' + bg;
+        bgImages.push(`linear-gradient(${canvasState.gradientDir}, ${canvasState.bgColor}, ${lighter})`);
+        bgSizes.push('auto');
+        bgRepeats.push('no-repeat');
+        bgPositions.push('0 0');
+      }
+
+      if (bgImages.length > 0) {
+        const joined = bgImages.join(', ');
+        // 更新弹窗内大预览
+        preview.style.backgroundImage = joined;
+        preview.style.backgroundSize = bgSizes.join(', ');
+        preview.style.backgroundRepeat = bgRepeats.join(', ');
+        preview.style.backgroundPosition = bgPositions.join(', ');
+        if (canvasState.mode === 'color' && canvasState.bgColor) {
+          preview.style.backgroundColor = canvasState.bgColor;
         }
-        preview.style.background = bg;
+
         // 实时联动排版预览
-        layoutPreview.style.background = bg;
-        layoutPreview.style.backgroundImage = '';
+        layoutPreview.style.backgroundImage = joined;
+        layoutPreview.style.backgroundSize = bgSizes.join(', ');
+        layoutPreview.style.backgroundRepeat = bgRepeats.join(', ');
+        layoutPreview.style.backgroundPosition = bgPositions.join(', ');
+        if (canvasState.mode === 'color' && canvasState.bgColor) {
+          layoutPreview.style.backgroundColor = canvasState.bgColor;
+        }
       }
     }
 
@@ -1337,68 +1745,117 @@ const App = (() => {
     function applyTemplateBg(tpl) {
       _savedCanvasBg = null;
       _savedCanvasBgImage = null;
+      // 用户有自定义画布 → 优先使用
+      if (_customCanvasBg) {
+        layoutPreview.style.backgroundImage = _customCanvasBg;
+        layoutPreview.style.backgroundSize = _customCanvasBgSize || '';
+        layoutPreview.style.backgroundRepeat = _customCanvasBgRepeat || '';
+        layoutPreview.style.backgroundPosition = _customCanvasBgPos || '';
+        layoutPreview.style.backgroundColor = _customCanvasBgColor || '';
+        layoutPreview.style.color = '';
+        layoutPreview.style.textShadow = '';
+        return;
+      }
+      const bg = templateBgs[tpl] || '';
+      // 重置为独立属性
+      layoutPreview.style.backgroundImage = bg.includes('gradient') ? bg : '';
+      layoutPreview.style.background = bg.includes('gradient') ? '' : bg;
+      layoutPreview.style.backgroundSize = '';
+      layoutPreview.style.backgroundRepeat = '';
+      layoutPreview.style.backgroundPosition = '';
+      layoutPreview.style.backgroundColor = '';
       if (tpl === 'night' || tpl === 'starry') {
-        layoutPreview.style.background = templateBgs[tpl];
         layoutPreview.style.color = '#e0d8d0';
         layoutPreview.style.textShadow = '0 1px 2px rgba(0,0,0,.3)';
       } else {
-        layoutPreview.style.background = templateBgs[tpl] || '';
         layoutPreview.style.color = '';
         layoutPreview.style.textShadow = '';
       }
     }
 
-    // 自动同步：监听左侧编辑器内容变化（保留格式）
+    // 自动同步：监听左侧编辑器内容变化（DOM 深度克隆保留全部格式）
     function syncLayoutPreview() {
       if (!editor || !layoutPreview) return;
       const text = editor.innerText.trim();
       if (!text) {
-        layoutPreview.innerHTML = '';
-        layoutPreview.style.display = 'none';
+        lpContent.innerHTML = '';
+        lpContent.style.display = 'none';
         layoutEmpty.style.display = 'flex';
+        layoutPreview.style.display = 'block';
         return;
       }
       layoutEmpty.style.display = 'none';
+      lpContent.style.display = 'block';
       layoutPreview.style.display = 'block';
 
-      // 解析：保留 innerHTML 格式（加粗/斜体/标题等）
+      // 清空 lpContent 重建（保留 lpEmpty/lpContent DOM 结构）
+      lpContent.innerHTML = '';
       const children = Array.from(editor.childNodes);
-      let html = '';
       let paraIndex = 0;
 
       for (const node of children) {
         if (node.nodeType === 1 && node.classList && node.classList.contains('scene-marker')) {
-          html += `<span class="lp-scene-marker">◆ ${node.textContent.trim() || '新场景'}</span>`;
+          // 场景标记
+          const span = document.createElement('span');
+          span.className = 'lp-scene-marker';
+          span.textContent = '◆ ' + (node.textContent.trim() || '新场景');
+          lpContent.appendChild(span);
         } else if (node.nodeType === 1 && node.classList && node.classList.contains('editor-image-wrap')) {
+          // 配图
           const img = node.querySelector('img');
-          if (img) html += `<div class="lp-image-wrap"><img src="${img.src}" alt="配图"></div>`;
-        } else if (node.nodeType === 1) {
-          // 块级元素：保留 innerHTML 以携带 <b>/<i>/<em>/<strong>/<span>/<h2>/<h3> 等格式
-          const inner = node.innerHTML.trim();
-          const txt = node.textContent.trim();
-          if (inner && txt) {
-            html += `<p class="lp-para" data-idx="${paraIndex++}">${inner}</p>`;
+          if (img) {
+            const wrap = document.createElement('div');
+            wrap.className = 'lp-image-wrap';
+            const clonedImg = img.cloneNode(true);
+            wrap.appendChild(clonedImg);
+            lpContent.appendChild(wrap);
           }
+        } else if (node.nodeType === 1) {
+          // 块级元素：深度克隆以保留 B/I/H2/H3 等内联格式
+          const txt = node.textContent.trim();
+          if (!txt) continue;
+          const cloned = node.cloneNode(true);
+          cloned.className = 'lp-para';
+          cloned.setAttribute('data-idx', paraIndex++);
+          // 映射格式标签
+          cloned.querySelectorAll('b, strong').forEach(el => { el.style.fontWeight = '700'; });
+          cloned.querySelectorAll('i, em').forEach(el => { el.style.fontStyle = 'italic'; });
+          cloned.querySelectorAll('h2').forEach(el => { el.className = 'lp-h2'; });
+          cloned.querySelectorAll('h3').forEach(el => { el.className = 'lp-h3'; });
+          cloned.querySelectorAll('u').forEach(el => { el.style.textDecoration = 'underline'; });
+          // 移除编辑器中可能残留的 contenteditable 属性
+          cloned.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+          lpContent.appendChild(cloned);
         } else if (node.nodeType === 3) {
           // 裸文本节点
           const txt = node.textContent.trim();
-          if (txt) html += `<p class="lp-para" data-idx="${paraIndex++}">${txt}</p>`;
+          if (!txt) continue;
+          const p = document.createElement('p');
+          p.className = 'lp-para';
+          p.setAttribute('data-idx', paraIndex++);
+          p.textContent = txt;
+          lpContent.appendChild(p);
         }
       }
 
       // 检查分支数据
-      layoutPreview.innerHTML = html;
       const branches = window._branchData || [];
       branches.forEach(b => {
-        const paraEl = layoutPreview.querySelector(`.lp-para[data-idx="${b.srcParagraph}"]`);
+        const paraEl = lpContent.querySelector(`.lp-para[data-idx="${b.srcParagraph}"]`);
         if (paraEl && b.text) {
           paraEl.insertAdjacentHTML('beforeend',
             '<span class="lp-branch-hint" title="段落' + (b.targetParagraph + 1) + '">↯ ' + b.text + '</span>');
         }
       });
 
-      // 画布联动：保持当前自定义背景
-      if (currentTemplate === 'custom' && _savedCanvasBg) {
+      // 画布联动：用户自定义画布始终优先
+      if (_customCanvasBg) {
+        layoutPreview.style.backgroundImage = _customCanvasBg;
+        layoutPreview.style.backgroundSize = _customCanvasBgSize || '';
+        layoutPreview.style.backgroundRepeat = _customCanvasBgRepeat || '';
+        layoutPreview.style.backgroundPosition = _customCanvasBgPos || '';
+        layoutPreview.style.backgroundColor = _customCanvasBgColor || '';
+      } else if (currentTemplate === 'custom' && _savedCanvasBg) {
         layoutPreview.style.background = _savedCanvasBg;
         layoutPreview.style.backgroundImage = _savedCanvasBgImage || '';
         if (_savedCanvasBgImage) {
@@ -1475,7 +1932,7 @@ const App = (() => {
     window.LayoutPanel = {
       sync: syncLayoutPreview,
       getTemplate: () => currentTemplate,
-      getPreviewHTML: () => layoutPreview.innerHTML,
+      getPreviewHTML: () => lpContent.innerHTML,
       getPreviewBg: () => layoutPreview.style.background
     };
 
@@ -1513,7 +1970,7 @@ const App = (() => {
 
     document.getElementById('exportWebBtn')?.addEventListener('click', exportToHTML);
     document.getElementById('exportScriptBtn')?.addEventListener('click', exportToMarkdown);
-    document.getElementById('exportPackBtn')?.addEventListener('click', () => showToast('离线包功能开发中…', ''));
+    document.getElementById('exportPackBtn')?.addEventListener('click', exportToZip);
   }
 
   function exportToHTML() {
@@ -1575,6 +2032,65 @@ const App = (() => {
     a.click();
     URL.revokeObjectURL(a.href);
     showToast('剧本已导出', 'success');
+  }
+
+  async function exportToZip() {
+    const pubTemplate = document.getElementById('pubTemplateSelect')?.value || 'sakura';
+    const pubMode = document.getElementById('pubModeSelect')?.value || 'scroll';
+
+    const workId = document.getElementById('pubProjectSelect')?.value;
+    const work = workId ? VNStore.getWork(workId) : null;
+    const title = work?.name || document.getElementById('vnTitle')?.value || '未命名视觉小说';
+    const author = work?.author || 'Phantom VN';
+    const scenes = work?.scenes?.length ? work.scenes : VNStore.getCurrentScenes();
+
+    if (!scenes || !scenes.length) {
+      showToast('暂无场景数据，请先在创作工坊中生成场景', 'error');
+      return;
+    }
+
+    // 统计外部图片数量
+    const externalImages = scenes.filter(s => OfflinePack.isExternalUrl(s.bgImage));
+    const totalExternal = externalImages.length;
+
+    // 禁用按钮，显示进度
+    const btn = document.getElementById('exportPackBtn');
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = totalExternal ? '打包中…' : '生成 ZIP…';
+
+    try {
+      const result = await OfflinePack.generate({
+        title, author, scenes,
+        template: pubTemplate,
+        mode: pubMode,
+        options: { petals: true, scrollReveal: true, fontSize: '16px', showSpeaker: true },
+        onProgress: (p) => {
+          if (p.stage === 'images' && totalExternal) {
+            btn.textContent = `内嵌图片 ${p.current}/${p.total}…`;
+          } else if (p.stage === 'html') {
+            btn.textContent = '生成 HTML…';
+          } else if (p.stage === 'zip') {
+            btn.textContent = '打包 ZIP…';
+          } else if (p.stage === 'compress') {
+            btn.textContent = `压缩中 ${Math.round(p.percent || 0)}%…`;
+          }
+        }
+      });
+
+      if (result.ok) {
+        const sizeMB = (result.size / 1024 / 1024).toFixed(1);
+        showToast(`离线包已生成 (${sizeMB} MB)，可在无网络环境下阅读`, 'success');
+      } else if (result.htmlOnly) {
+        showToast(result.reason, '');
+      }
+    } catch (err) {
+      console.error('离线打包失败:', err);
+      showToast('打包失败，请检查网络后重试', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
   }
 
   function downloadText(content, filename) {
