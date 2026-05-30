@@ -14,7 +14,7 @@ const Agents = (() => {
 
   const API_CONFIG = {
     ziwen: { endpoint: PROXY_URL },
-    huahua: { endpoint: PROXY_URL, imageEndpoint: '/api/image', imageModel: 'flux' },
+    huahua: { endpoint: PROXY_URL, imageEndpoint: '/api/image' },
     mzhou:  { endpoint: PROXY_URL }
   };
 
@@ -145,6 +145,27 @@ const Agents = (() => {
     if (el) el.remove();
   }
 
+  function showThinking(agent) {
+    const history = document.getElementById(agent + '-history');
+    const row = document.createElement('div');
+    row.className = 'msg-row agent ' + agent;
+    row.id = 'thinking-' + agent;
+    let label = { ziwen: '字', huahua: '花', mzhou: '暮' }[agent];
+    row.innerHTML = `
+      <div class="msg-avatar">${label}</div>
+      <div class="msg-bubble thinking-bubble">
+        <span class="thinking-text">思考中……</span>
+      </div>`;
+    history.appendChild(row);
+    history.scrollTop = history.scrollHeight;
+    return row;
+  }
+
+  function hideThinking(agent) {
+    const el = document.getElementById('thinking-' + agent);
+    if (el) el.remove();
+  }
+
   // ══════════════════════════════════════
   // 字吻 — 文字优化智能体
   // ══════════════════════════════════════
@@ -171,14 +192,24 @@ const Agents = (() => {
       // 生成 3 个版本
       await delay(1400 + Math.random() * 600);
       hideTyping('ziwen');
+      showThinking('ziwen');
       const versions = [];
       for (let i = 0; i < 3; i++) {
         const llmResult = await safeCallLLM('ziwen', buildZiwenPrompt(mode, ctx, userInput, intensity, i));
         if (llmResult !== null) {
           versions.push(llmResult);
         } else {
-          versions.push(demoZiwenResponse(mode, ctx || userInput, intensity, i));
+          // LLM 失败时不回退到演示文本，跳过该版本
         }
+      }
+      hideThinking('ziwen');
+      if (versions.length === 0) {
+        appendMessage('ziwen', 'agent', '', {
+          type: 'single',
+          mode: modeLabels[mode],
+          result: '（所有版本生成失败，请检查 API Key 配置或稍后重试）'
+        });
+        return;
       }
       appendMessage('ziwen', 'agent', '', {
         type: 'multi-version',
@@ -191,9 +222,14 @@ const Agents = (() => {
       // 单版本
       await delay(1000 + Math.random() * 800);
       hideTyping('ziwen');
+      showThinking('ziwen');
       let result = await safeCallLLM('ziwen', buildZiwenPrompt(mode, ctx, userInput, intensity));
+      hideThinking('ziwen');
       if (result === null) {
-        result = demoZiwenResponse(mode, ctx || userInput, intensity);
+        hideThinking('ziwen');
+        appendMessage('ziwen', 'agent', '<span style="color:var(--accent-warm)">⚠ AI 服务暂时不可用，请稍后重试</span>', { type: 'optimized', mode: modeLabels[mode], intensity });
+        clearContext('ziwen');
+        return;
       }
       appendMessage('ziwen', 'agent', result, { type: 'optimized', mode: modeLabels[mode], intensity });
       VNStore.addTextSegment(result);
@@ -221,43 +257,7 @@ const Agents = (() => {
     return `${modeInstructions[mode]}。\n\n原文：${ctx || ''}\n\n${extra ? '额外要求：' + extra : ''}${variantHint}`;
   }
 
-  function demoZiwenResponse(mode, text, intensity = 50, variantIdx = 0) {
-    // 根据强度和变体索引生成不同风格的演示文本
-    const variants = {
-      polish: [
-        `夜色如墨，染透了长安城每一寸青砖。她立于城楼之上，衣袂随风翻卷，双眸中映着远处烽火的余烬——那是一种久经沙场的人才懂得的沉默。`,
-        `墨色的夜将长安城悄然淹没。城楼上，她衣角翻飞，望着渐渐熄灭的烽火，眼中有什么东西无声地沉淀。`,
-        `夜沉如墨。城楼上的女子一言不发，远处烽火将熄，映在她眸中，像一场说不清楚的梦。`
-      ],
-      expand: [
-        `夜色如墨，沉沉地压在长安城每一块青石板上。她静静立于城楼之巅，月华清冷，将她的轮廓勾勒得如同一幅墨色工笔。\n\n风从关外吹来，带着大漠孤烟的气息，将她的衣袂吹得猎猎作响。她没有转身，只是那双曾见过无数生死的眼睛，在凝望着远方渐渐熄灭的烽火——那一点点明灭的光，像极了她此刻的心情。`,
-        `黑夜浓如泼墨，将长安城的每一条街巷都藏了进去，藏进了时光深处，也藏进了她心口那道说不出来的隐痛里。\n\n她一个人站在城头，风把头发吹乱了也不管，只是那么静静地看着远处的烽火，看着那点微弱的光一明一暗，一明一暗……`,
-        `漫长的夜把整座长安城压成了一幅水墨。城楼上，她的影子被月光拉得很长，衣袂在风里猎猎作响，像是某种无言的告别。\n\n那火光——关外最后一束烽火——在她眼中慢慢小了，暗了，最终像一颗星陨落在黑暗里。她没动，连眼皮都没眨一下。`
-      ],
-      rewrite: [
-        `黑夜笼罩长安。她站在城头，任风吹乱衣角，眼中倒映着战火将熄的最后一丝光。`,
-        `长安入夜，城楼孤立。她迎着风，望向那一点快要消失的烽火，心里什么话也没有。`,
-        `夜深了，长安静了。她站在最高处，看着关外的火光灭掉，什么都没说。`
-      ],
-      condense: [
-        `夜染长安，她立于城楼，眸映烽火，一言不发。`,
-        `墨夜长安，城楼孤影，烽火将熄。`,
-        `夜沉，烽灭，她无言。`
-      ],
-      dialogue: [
-        `【旁白】：夜色如墨，长安城楼上，一道身影静立许久。\n\n【燕离】：（低声）烽火灭了。\n\n【旁白】：她转过身，眸中有什么东西，悄然碎裂。`,
-        `【旁白】：夜深，城楼风冷，她一个人站了很久。\n\n【燕离】：（自语）灭了……真的灭了。\n\n【旁白】：声音很轻，像是说给自己听，又像是说给那场还没散尽的战争。`,
-        `【旁白】：月色惨白，烽火将熄，只有她还在城头站着。\n\n【燕离】：（沉默片刻后，轻笑）也好。\n\n【旁白】：没人知道她这句「也好」，藏了多少说不出口的东西。`
-      ]
-    };
-    const pool = variants[mode] || variants.polish;
-    const idx = variantIdx % pool.length;
-    const base = text ? text.slice(0, 30) : '';
-    let result = pool[idx];
-    // 根据强度调整演示说明
-    const intensityNote = intensity <= 20 ? '（轻度处理）' : intensity >= 80 ? '（深度改写）' : '';
-    return result + (base ? `\n\n<span style="font-size:10px;color:var(--text-dim)">原文参考：「${base}…」${intensityNote}</span>` : '');
-  }
+  // 演示文本已移除 — LLM 失败时显示错误提示
 
   // 采用多版本中某个版本
   function adoptVersion(text) {
@@ -299,18 +299,26 @@ const Agents = (() => {
 
     // ── 生成图片 ──
     hideTyping('huahua');
+    showThinking('huahua');
     let imageUrl = '';
     let caption = userInput || ctx?.slice(0, 60) || '生成的图片';
 
     if (API_CONFIG.huahua.imageEndpoint) {
       try {
         imageUrl = await callImageGen('huahua', imagePrompt, ratio, refImageData);
-        // 验证图片 URL 是否可访问（Pollinations 需要时间渲染，做一次预检查）
+        // 验证图片 URL 是否可访问（Pollinations 需要时间渲染，做预检查，最多等 20 秒）
         if (imageUrl) {
-          const valid = await validateImageUrl(imageUrl);
+          const valid = await validateImageUrl(imageUrl, 20000);
           if (!valid) {
-            console.warn('[huahua] 图片 URL 无效或超时，使用占位图');
-            imageUrl = generatePlaceholderSVG(mode, style, userInput || ctx || '', injectChar);
+            // 重试一次（Pollinations 冷启动可能较慢）
+            console.warn('[huahua] 首次图片加载超时，重试中...');
+            await new Promise(r => setTimeout(r, 2000));
+            imageUrl = await callImageGen('huahua', imagePrompt, ratio, refImageData);
+            const valid2 = await validateImageUrl(imageUrl, 20000);
+            if (!valid2) {
+              console.warn('[huahua] 重试后图片 URL 仍无效，使用占位图');
+              imageUrl = generatePlaceholderSVG(mode, style, userInput || ctx || '', injectChar);
+            }
           }
         } else {
           imageUrl = generatePlaceholderSVG(mode, style, userInput || ctx || '', injectChar);
@@ -323,6 +331,7 @@ const Agents = (() => {
       imageUrl = generatePlaceholderSVG(mode, style, userInput || ctx || '', injectChar);
     }
 
+    hideThinking('huahua');
     appendMessage('huahua', 'agent', imageUrl, { type: 'image', caption, hasRef });
     clearContext('huahua');
     updateMzhouResources();
@@ -370,11 +379,15 @@ const Agents = (() => {
   <circle cx="240" cy="100" r="35" fill="${accent}" opacity="0.15"/>
   <text x="240" y="108" fill="${accent}" font-size="28" text-anchor="middle" font-family="serif" opacity="0.8">✿</text>
   <text x="240" y="175" fill="#4a3040" font-size="13" text-anchor="middle" font-family="sans-serif" opacity="0.7">${shortDesc}</text>
-  <text x="240" y="196" fill="${accent}" font-size="11" text-anchor="middle" opacity="0.5">[${style} · ${mode}] 演示模式</text>
+  <text x="240" y="196" fill="${accent}" font-size="11" text-anchor="middle" opacity="0.5">[${style} · ${mode}] 占位图</text>
   ${charLine}
-  <text x="240" y="258" fill="#4a3040" font-size="10" text-anchor="middle" opacity="0.3">配置 API Key 后生成真实图片</text>
+  <text x="240" y="258" fill="#4a3040" font-size="10" text-anchor="middle" opacity="0.3">配置 API Key 后将生成 AI 图片</text>
 </svg>`;
-    return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)));
+    // 安全 Base64 编码（替代已废弃的 unescape）
+    const bytes = new TextEncoder().encode(svgStr);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return 'data:image/svg+xml;base64,' + btoa(binary);
   }
 
   // ══════════════════════════════════════
@@ -514,10 +527,13 @@ const Agents = (() => {
     const typingRow = showTyping('mzhou');
     await delay(2000 + Math.random() * 1000);
     hideTyping('mzhou');
+    showThinking('mzhou');
 
     let script = await safeCallLLM('mzhou', buildMzhouPrompt(userInput, segments, images, pov, pace));
     if (script === null) {
-      script = demoMzhouScript(title, segments, images);
+      hideThinking('mzhou');
+      appendMessage('mzhou', 'agent', '<span style="color:var(--accent-warm)">⚠ AI 服务暂时不可用，请稍后重试</span>', { type: 'vn' });
+      return;
     }
 
     const scenes = parseMzhouScript(script, segments, images);
@@ -525,6 +541,7 @@ const Agents = (() => {
     updateVNPlayer(scenes);
     renderScriptEditor(scenes);
 
+    hideThinking('mzhou');
     appendMessage('mzhou', 'agent', formatScriptPreview(script, scenes.length), { type: 'vn' });
   }
 
@@ -547,21 +564,7 @@ ${segTexts}
 ---`;
   }
 
-  function demoMzhouScript(title, segments, images) {
-    const seg = segments[0] || { text: '夜色如墨，长安沉寂。' };
-    return `[场景1] 背景：夜色笼罩的长安城楼
-角色：燕离（主角）
-旁白：${seg.text.slice(0,60)}…
-
-[场景2] 背景：宫廷走廊
-角色：左擎宁
-对话：「你以为，这一切真的是巧合吗？」
-
-[场景3] 背景：烽火熄灭的城头
-角色：燕离
-对话：「不管真相如何——我不会放手。」
-旁白：风吹过，带走了最后一声叹息。`;
-  }
+  // 演示脚本已移除 — LLM 失败时显示错误提示
 
   function parseMzhouScript(script, segments, images) {
     const sceneBlocks = script.split(/\[场景\d+\]/).filter(b => b.trim());
@@ -606,7 +609,7 @@ ${segTexts}
           <span class="scene-speaker-tag">${(s.speaker || '旁白').slice(0,8)}</span>
           <span class="scene-text-preview" contenteditable="true"
             data-idx="${i}"
-            onblur="Agents.updateSceneText(${i}, this.innerText)"
+            onblur="Agents.updateSceneText(parseInt(this.dataset.idx), this.innerText)"
             title="点击编辑">${(s.text || '').slice(0, 40)}${(s.text||'').length > 40 ? '…' : ''}</span>
         </div>
         <div class="scene-row-ctrl">
@@ -936,15 +939,27 @@ ${segTexts}
     return data.data?.[0]?.url || '';
   }
 
-  // 验证图片 URL 是否可访问（带超时，避免 Pollinations 渲染慢导致空白）
-  async function validateImageUrl(url, timeoutMs = 8000) {
+  // 验证图片 URL 是否可访问（使用 Image 元素 onload/onerror，避免 no-cors 无法校验的问题）
+  async function validateImageUrl(url, timeoutMs = 20000) {
     if (!url) return false;
     try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), timeoutMs);
-      const resp = await fetch(url, { method: 'HEAD', signal: ctrl.signal, mode: 'no-cors' });
-      clearTimeout(t);
-      return true;
+      const result = await new Promise((resolve) => {
+        const img = new Image();
+        const timer = setTimeout(() => {
+          img.src = '';
+          resolve(false);
+        }, timeoutMs);
+        img.onload = () => {
+          clearTimeout(timer);
+          resolve(true);
+        };
+        img.onerror = () => {
+          clearTimeout(timer);
+          resolve(false);
+        };
+        img.src = url;
+      });
+      return result;
     } catch {
       return false;
     }
@@ -953,7 +968,7 @@ ${segTexts}
   // ── 工具 ──
   function delay(ms) { return new Promise(res => setTimeout(res, ms)); }
   function escapeAttr(str) {
-    return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;').replace(/"/g, '&quot;').slice(0, 200);
+    return (str || '').replace(/\\/g, '\\\\').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;').replace(/"/g, '&quot;').slice(0, 200);
   }
 
   // ── 初始化（供 app.js 调用）──

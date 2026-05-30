@@ -25,6 +25,7 @@ var VNEffects = (function() {
 
   var config = {};
   var rafPetal = 0;
+  var _petalLoopActive = false;
 
   // ── 加载字体 ──
   function loadFonts(fonts) {
@@ -98,6 +99,8 @@ var VNEffects = (function() {
     }
 
     function loop() {
+      if (_petalLoopActive) return;  // 防止重复循环
+      _petalLoopActive = true;
       ctx.clearRect(0, 0, W, H);
       for (var i = 0; i < petals.length; i++) {
         var p = petals[i];
@@ -116,8 +119,13 @@ var VNEffects = (function() {
     loop();
 
     document.addEventListener('visibilitychange', function() {
-      if (document.hidden) cancelAnimationFrame(rafPetal);
-      else loop();
+      if (document.hidden) {
+        cancelAnimationFrame(rafPetal);
+        _petalLoopActive = false;
+      } else {
+        _petalLoopActive = false;
+        loop();
+      }
     });
   }
 

@@ -142,7 +142,7 @@ const Auth = (() => {
   function logout() {
     clearSession();
     renderUI(null);
-    showToast('已退出登录', 'success');
+    window.App?.showToast('已退出登录', 'success');
   }
 
   // ── 激活作者身份 ──
@@ -152,7 +152,9 @@ const Auth = (() => {
     try {
       await apiCall('activate_author', {}, true);
       const updated = { ...user, role: 'author' };
-      saveSession(updated, user.token, !!localStorage.getItem(SESSION_KEY));
+      // 确保 token 有效再保存，避免 Bearer null
+      const token = user.token && user.token !== 'null' ? user.token : getToken();
+      saveSession(updated, token, !!localStorage.getItem(SESSION_KEY));
       renderUI(updated);
       return { ok: true };
     } catch (e) {
@@ -276,7 +278,7 @@ const Auth = (() => {
     // 激活作者
     document.getElementById('activateAuthorBtn')?.addEventListener('click', async () => {
       const result = await activateAuthor();
-      showToast(result.ok ? '已升级为作者 ✦' : result.msg, result.ok ? 'success' : 'error');
+      window.App?.showToast(result.ok ? '已升级为作者 ✦' : result.msg, result.ok ? 'success' : 'error');
     });
 
     // 登录弹窗
@@ -335,7 +337,7 @@ const Auth = (() => {
         closeModal('loginModal');
         renderUI(result.user);
         document.getElementById('loginPassword').value = '';
-        showToast(`欢迎回来，${result.user.username}！`, 'success');
+        window.App?.showToast(`欢迎回来，${result.user.username}！`, 'success');
       } else {
         showError('loginError', result.msg);
       }
@@ -366,7 +368,7 @@ const Auth = (() => {
         saveSession(result.user, result.token, false);
         closeModal('registerModal');
         renderUI(result.user);
-        showToast(`注册成功！欢迎加入，${result.user.username} ✦`, 'success');
+        window.App?.showToast(`注册成功！欢迎加入，${result.user.username} ✦`, 'success');
       } else {
         showError('regError', result.msg);
       }
@@ -413,9 +415,9 @@ const Auth = (() => {
     if (result.ok) {
       renderUI(result.user);
       closeModal('profileModal');
-      showToast('资料已更新', 'success');
+      window.App?.showToast('资料已更新', 'success');
     } else {
-      showToast(result.msg, 'error');
+      window.App?.showToast(result.msg, 'error');
     }
   }
 

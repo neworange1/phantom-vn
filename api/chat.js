@@ -2,7 +2,7 @@
  * Vercel Serverless Function — DeepSeek API 代理
  *
  * 架构说明：
- * - API Key 来源：Vercel 环境变量 `DEEPSEEK_API_KEY`，无回退硬编码值。
+ * - API Key 来源：1) Vercel 环境变量 `DEEPSEEK_API_KEY`；2) 本地 .env 文件回退
  * - 封装原则：所有 DeepSeek 调用经由此函数，前端不持有任何 Key。
  * - 错误分级：auth 错误（401/403）返回 demo_mode 标识，前端据此切换演示模式。
  */
@@ -16,8 +16,34 @@ const SYSTEM_PROMPTS = {
 // ══════════════════════════════════════
 // API Key 配置（唯一入口，勿直接修改）
 // ══════════════════════════════════════
+function loadLocalEnv() {
+  // 仅在非 Vercel 环境下尝试读取 .env 文件
+  if (process.env.VERCEL || process.env.NOW_REGION) return;
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const envPath = path.join(process.cwd(), '.env');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf-8');
+      content.split('\n').forEach(line => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) return;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx === -1) return;
+        const key = trimmed.slice(0, eqIdx).trim();
+        const val = trimmed.slice(eqIdx + 1).trim();
+        if (key && val && !process.env[key]) {
+          process.env[key] = val;
+        }
+      });
+    }
+  } catch (_) { /* 静默失败 — .env 仅用于本地开发便利 */ }
+}
+loadLocalEnv();
+
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 // 注：Vercel 环境变量在 Dashboard → Settings → Environment Variables 设置
+//     本地开发请在项目根目录创建 .env 文件（已在 .gitignore 中封存）
 //     若未配置，API 将返回 demo_mode，前端自动进入演示模式
 
 export default async function handler(req, res) {

@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+<w:numbering xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex" xmlns:cx1="http://schemas.microsoft.com/office/drawing/2015/9/8/chartex" xmlns:cx2="http://schemas.microsoft.com/office/drawing/2015/10/21/chartex" xmlns:cx3="http://schemas.microsoft.com/office/drawing/2016/5/9/chartex" xmlns:cx4="http://schemas.microsoft.com/office/drawing/2016/5/10/chartex" xmlns:cx5="http://schemas.microsoft.com/office/drawing/2016/5/11/chartex" xmlns:cx6="http://schemas.microsoft.com/office/drawing/2016/5/12/chartex" xmlns:cx7="http://schemas.microsoft.com/office/drawing/2016/5/13/chartex" xmlns:cx8="http://schemas.microsoft.com/office/drawing/2016/5/14/chartex" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:aink="http://schemas.microsoft.com/office/drawing/2016/ink" xmlns:am3d="http://schemas.microsoft.com/office/drawing/2017/model3d" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:oel="http://schemas.microsoft.com/office/2019/extlst" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:w10="urn:schemas-microsoft-com:office:word" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex" xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid" xmlns:w16="http://schemas.microsoft.com/office/word/2018/wordml" xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" xmlns:w16sdtdh="http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash" xmlns:w16sdtfl="http://schemas.microsoft.com/office/word/2024/wordml/sdtformatlock" xmlns:w16se="http://schemas.microsoft.com/office/word/2015/wordml/symex" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk" xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" mc:Ignorable="w14 w15 w16se w16cid w16 w16cex w16sdtdh w16sdtfl w16du wp14">
+  <w:abstractNum w:abstractNumId="0" w15:restartNumberingAfterBreak="0">
+    <w:nsid w:val="2A0C4139"/>
+    <w:multiLevelType w:val="hybridMultilevel"/>
+    <w:tmpl w:val="F8E4C3B8"/>
+    <w:lvl w:ilvl="0" w:tplc="FA96CEF8">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="bullet"/>
+      <w:lvlText w:val="●"/>
+      <w:lvlJc w:val="left"/>
+      <w:pPr>
+        <w:ind w:left="720" w:hanging="360"/>
+      </w:pPr>
+    </w:lvl>
+    <w:lvl w:ilvl="1" w:tplc="A15E15C2">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="bullet"/>
+      <w:lvlText w:val="○"/>
+      <w:lvlJc w:val="left"/>
+      <w:pPr>
+        <w:ind w:left="1440" w:hanging="360"/>
+      </w:pPr>
+    </w:lvl>
+    <w:lvl w:ilvl="2" w:tplc="1E5C028C">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="bullet"/>
+      <w:lvlText w:val="■"/>
+      <w:lvlJc w:val="left"/>
+      <w:pPr>
+        <w:ind w:left="2160" w:hanging="360"/>
+      </w:pPr>
+    </w:lvl>
+    <w:lvl w:ilvl="3" w:tplc="2EE68156">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="bullet"/>
+      <w:lvlText w:val="●"/>
+      <w:lvlJc w:val="left"/>
+      <w:pPr>
+        <w:ind w:left="2880" w:hanging="360"/>
+      </w:pPr>
+    </w:lvl>
+    <w:lvl w:ilvl="4" w:tplc="51A0D0DC">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="bullet"/>
+      <w:lvlText w:val="○"/>
+      <w:lvlJc w:val="left"/>
+      <w:pPr>
+        <w:ind w:left="3600" w:hanging="360"/>
+      </w:pPr>
+    </w:lvl>
+    <w:lvl w:ilvl="5" w:tplc="2FECBF94">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="bullet"/>
+      <w:lvlText w:val="■"/>
+      <w:lvlJc w:val="left"/>
+      <w:pPr>
+        <w:ind w:left="4320" w:hanging="360"/>
+      </w:pPr>
+    </w:lvl>
+    <w:lvl w:ilvl="6" w:tplc="2856B9BE">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="bullet"/>
+      <w:lvlText w:val="●"/>
+      <w:lvlJc w:val="left"/>
+      <w:pPr>
+        <w:ind w:left="5040" w:hanging="360"/>
+      </w:pPr>
+    </w:lvl>
+    <w:lvl w:ilvl="7" w:tplc="2138D720">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="bullet"/>
+      <w:lvlText w:val="●"/>
+      <w:lvlJc w:val="left"/>
+      <w:pPr>
+        <w:ind w:left="5760" w:hanging="360"/>
+      </w:pPr>
+    </w:lvl>
+    <w:lvl w:ilvl="8" w:tplc="61882910">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="bullet"/>
+      <w:lvlText w:val="●"/>
+      <w:lvlJc w:val="left"/>
+      <w:pPr>
+        <w:ind w:left="6480" w:hanging="360"/>
+      </w:pPr>
+    </w:lvl>
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="1" w15:restartNumberingAfterBreak="0">
+    <w:nsid w:val="3E9C39EF"/>
+    <w:multiLevelType w:val="hybridMultilevel"/>
+    <w:tmpl w:val="77C422C8"/>
+    <w:lvl w:ilvl="0" w:tplc="B6DA3852">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="bullet"/>
+      <w:lvlText w:val="•"/>
+      <w:lvlJc w:val="left"/>
+      <w:pPr>
+        <w:ind w:left="540" w:hanging="270"/>
+      </w:pPr>
+    </w:lvl>
+    <w:lvl w:ilvl="1" w:tplc="2AF20540">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="bullet"/>
+      <w:lvlText w:val="◦"/>
+      <w:lvlJc w:val="left"/>
+      <w:pPr>
+        <w:ind w:left="1080" w:hanging="270"/>
+      </w:pPr>
+    </w:lvl>
+    <w:lvl w:ilvl="2" w:tplc="DA801F20">
+      <w:numFmt w:val="decimal"/>
+      <w:lvlText w:val=""/>
+      <w:lvlJc w:val="left"/>
+    </w:lvl>
+    <w:lvl w:ilvl="3" w:tplc="7CA0A9B2">
+      <w:numFmt w:val="decimal"/>
+      <w:lvlText w:val=""/>
+      <w:lvlJc w:val="left"/>
+    </w:lvl>
+    <w:lvl w:ilvl="4" w:tplc="C6A0A388">
+      <w:numFmt w:val="decimal"/>
+      <w:lvlText w:val=""/>
+      <w:lvlJc w:val="left"/>
+    </w:lvl>
+    <w:lvl w:ilvl="5" w:tplc="008AF3E6">
+      <w:numFmt w:val="decimal"/>
+      <w:lvlText w:val=""/>
+      <w:lvlJc w:val="left"/>
+    </w:lvl>
+    <w:lvl w:ilvl="6" w:tplc="66B0CE62">
+      <w:numFmt w:val="decimal"/>
+      <w:lvlText w:val=""/>
+      <w:lvlJc w:val="left"/>
+    </w:lvl>
+    <w:lvl w:ilvl="7" w:tplc="227064D8">
+      <w:numFmt w:val="decimal"/>
+      <w:lvlText w:val=""/>
+      <w:lvlJc w:val="left"/>
+    </w:lvl>
+    <w:lvl w:ilvl="8" w:tplc="2BF236A8">
+      <w:numFmt w:val="decimal"/>
+      <w:lvlText w:val=""/>
+      <w:lvlJc w:val="left"/>
+    </w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="1" w16cid:durableId="375396745">
+    <w:abstractNumId w:val="0"/>
+    <w:lvlOverride w:ilvl="0">
+      <w:startOverride w:val="1"/>
+    </w:lvlOverride>
+  </w:num>
+  <w:num w:numId="2" w16cid:durableId="1128740209">
+    <w:abstractNumId w:val="1"/>
+    <w:lvlOverride w:ilvl="0">
+      <w:startOverride w:val="1"/>
+    </w:lvlOverride>
+  </w:num>
+</w:numbering>

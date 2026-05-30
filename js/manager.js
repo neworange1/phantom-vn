@@ -299,12 +299,13 @@ const LibraryManager = (() => {
   function confirmDeleteWork(id) {
     const work = VNStore.getWork(id);
     if (!work) return;
-    if (confirm(`确认删除「${work.name}」？此操作不可撤销。`)) {
-      VNStore.deleteWork(id);
-      renderWorksGrid();
-      renderCollectionList();
-      App.showToast('已删除', 'success');
-    }
+    // 双重确认防误触
+    if (!confirm(`⚠️ 确认删除「${work.name}」？此操作不可撤销。`)) return;
+    if (!confirm(`请再次确认：您确定要永久删除「${work.name}」吗？\n（该作品的所有章节、段落、分支都将被删除）`)) return;
+    VNStore.deleteWork(id);
+    renderWorksGrid();
+    renderCollectionList();
+    App.showToast('已删除', 'success');
   }
 
   function moveToCollection(id) {

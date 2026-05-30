@@ -5,6 +5,8 @@
 
 @font-face {
   font-family: 'Kawaii';
+  /* 本地开发路径：assets/fonts/ 相对于 HTML 文件 */
+  /* CDN/生产环境部署时注意路径可能需调整 */
   src: url('../assets/fonts/zihun-katong.ttf') format('truetype');
   font-weight: normal;
   font-style: normal;
@@ -513,6 +515,13 @@ a { color: var(--accent-purple); text-decoration: none; }
   color: var(--text-primary);
   box-shadow: 1px 1px 2px rgba(180,160,140,0.18);
 }
+/* 手动 pressed 状态（替代被禁止的 :active 伪类） */
+.fmt-btn.fmt-active {
+  background: var(--bg-active);
+  color: var(--text-primary);
+  box-shadow: inset 1px 1px 3px rgba(0,0,0,0.12);
+  transform: scale(0.95);
+}
 .format-bar select:hover { background-color: var(--bg-active); color: var(--text-primary); }
 #autoFormatBtn {
   background: linear-gradient(90deg, var(--autoformat-from), var(--autoformat-to));
@@ -908,6 +917,20 @@ a { color: var(--accent-purple); text-decoration: none; }
 .msg-row.agent.huahua .msg-bubble { border-left: 2px solid var(--huahua-color); }
 .msg-row.agent.mzhou .msg-bubble { border-left: 2px solid var(--mzhou-color); }
 
+/* 思考中提示 */
+.thinking-bubble {
+  display: flex; align-items: center; min-height: 28px;
+  padding: 6px 14px !important;
+}
+.thinking-text {
+  font-size: 12px; color: var(--text-dim);
+  animation: thinkingPulse 1.5s ease-in-out infinite;
+}
+@keyframes thinkingPulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
 .msg-img {
   max-width: 100%;
   border-radius: var(--radius-md);
@@ -1176,14 +1199,14 @@ a { color: var(--accent-purple); text-decoration: none; }
 .layout-preview-wrap {
   border-radius: var(--radius-sm);
   overflow: hidden;
-  background: var(--bg-deep);
+  background: transparent;
   border: 1px solid var(--border);
-  box-shadow: var(--neu-inset-shadow);
 }
 .layout-preview {
   min-height: 180px; max-height: 320px;
   overflow-y: auto;
   position: relative;
+  background: transparent;
 }
 .lp-empty {
   display: flex; flex-direction: column; align-items: center;
@@ -1200,6 +1223,9 @@ a { color: var(--accent-purple); text-decoration: none; }
   font-size: 13px;
   color: var(--text-primary);
   transition: background .5s;
+  position: relative;
+  z-index: 1;
+  min-height: 180px;
 }
 .lp-content p {
   margin-bottom: 14px;
@@ -1215,6 +1241,28 @@ a { color: var(--accent-purple); text-decoration: none; }
   border-top: 1px dashed var(--border);
   border-bottom: 1px dashed var(--border);
   letter-spacing: 2px;
+}
+/* 排版预览段落 */
+.lp-para {
+  margin: 0 0 10px; padding: 0 12px;
+  font-family: "KaiTi","STKaiti","楷体",serif;
+  font-size: 14px; line-height: 1.8;
+  color: inherit;
+}
+.lp-para b, .lp-para strong { font-weight: 700; }
+.lp-para i, .lp-para em { font-style: italic; }
+.lp-para u { text-decoration: underline; }
+.lp-h2 {
+  display: block; margin: 16px 0 10px;
+  font-size: 18px; font-weight: 700;
+  color: var(--accent-purple);
+  border-left: 3px solid var(--accent-purple);
+  padding-left: 8px;
+}
+.lp-h3 {
+  display: block; margin: 14px 0 8px;
+  font-size: 15px; font-weight: 600;
+  color: var(--text);
 }
 .lp-image-wrap {
   text-align: center; margin: 16px 0;
@@ -1353,6 +1401,25 @@ a { color: var(--accent-purple); text-decoration: none; }
   background: var(--bg-hover); font-weight: 600;
 }
 
+/* 花纹选择网格 */
+.ce-pattern-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+.ce-pattern-card {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 8px 4px; border-radius: 6px; border: 1px solid var(--border);
+  cursor: pointer; transition: all .15s; text-align: center;
+}
+.ce-pattern-card:hover { border-color: var(--accent-purple); transform: translateY(-1px); }
+.ce-pattern-card.active {
+  border-color: var(--accent-purple); box-shadow: 0 0 0 2px var(--accent-purple-light, rgba(139,105,180,.25));
+  background: var(--bg-hover);
+}
+.ce-pattern-icon { font-size: 18px; line-height: 1; }
+.ce-pattern-label { font-size: 10px; color: var(--text-dim); }
+
 /* 大预览框 */
 .ce-preview-big-wrap {
   width: 100%; display: flex; align-items: center; justify-content: center;
@@ -1374,7 +1441,8 @@ a { color: var(--accent-purple); text-decoration: none; }
 
 /* 材质网格（弹窗内3列） */
 .ce-material-grid-big { grid-template-columns: repeat(3, 1fr); }
-.ce-mat-card .ce-mat-preview { height: 56px; }
+.ce-mat-card .ce-mat-preview { height: 56px; overflow: hidden; border-radius: 6px; margin-bottom: 4px; }
+.ce-mat-card .ce-mat-preview svg { width: 100%; height: 100%; display: block; }
 
 /* 纹理卡片（弹窗内更宽） */
 .ce-texture-grid { grid-template-columns: repeat(3, 1fr); }

@@ -22,7 +22,8 @@ export default async function handler(req, res) {
     for (let i = 0; i < count; i++) {
       const seed = Math.floor(Math.random() * 900000) + 100000 + i;
       const encodedPrompt = encodeURIComponent(prompt);
-      const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&seed=${seed}&model=flux&nologo=true&enhance=true`;
+      // Pollinations 已迁移到 Sana 模型，去除 model=flux 和 enhance 参数
+      const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&seed=${seed}&nologo=true`;
       images.push({ url });
     }
 

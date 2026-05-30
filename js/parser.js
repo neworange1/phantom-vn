@@ -302,7 +302,9 @@ const Parser = (() => {
     };
     container.childNodes.forEach(walk);
 
-    const result = text.replace(/\n{3,}/g, '\n\n').trim();
+    let result = text.replace(/\n{3,}/g, '\n\n').trim();
+    // 防护：CORS 代理返回的 JSON 中 HTML 实体可能被二次编码
+    result = result.replace(/&amp;(amp|lt|gt|quot|#\d+;|#x[0-9a-fA-F]+;)/g, '&$1');
     if (!result || result.length < 50)
       throw new Error('未能从页面中提取到有效文本，可能是动态渲染页面');
     return result;
@@ -326,11 +328,8 @@ const Parser = (() => {
         .replace(/\u3000/g, '  ')
         .trim();
 
-      if (!line) {
-        if (!prevEmpty) result.push('');
-        prevEmpty = true;
-        continue;
-      }
+      // 自动去空行：跳过空白行
+      if (!line) continue;
       prevEmpty = false;
 
       // 章节标题识别
